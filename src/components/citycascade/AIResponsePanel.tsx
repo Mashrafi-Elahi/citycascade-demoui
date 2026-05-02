@@ -8,7 +8,7 @@ import type { JSX } from "react";
 interface Section {
   id: string;
   title: string;
-  icon: (p: { className?: string }) => JSX.Element;
+  icon: (p: { className?: string; style?: React.CSSProperties }) => React.ReactElement;
   items: string[];
   tone: "cyan" | "red" | "amber" | "green";
 }

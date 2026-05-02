@@ -6,7 +6,7 @@ interface Metric {
   value: string;
   delta: string;
   tone: "red" | "amber" | "cyan" | "green";
-  icon: (p: { className?: string }) => JSX.Element;
+  icon: (p: { className?: string; style?: React.CSSProperties }) => React.ReactElement;
 }
 
 interface Props {
