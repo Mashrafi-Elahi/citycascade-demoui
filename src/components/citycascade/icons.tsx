@@ -220,7 +220,7 @@ export type DisasterId =
   | "flood" | "fire" | "rain" | "earthquake" | "crash"
   | "dengue" | "smog" | "outage" | "waste" | "water";
 
-export const DisasterIconMap: Record<DisasterId, (p: IconProps) => JSX.Element> = {
+export const DisasterIconMap: Record<DisasterId, (p: IconProps) => React.ReactElement> = {
   flood: FloodIcon,
   fire: FireIcon,
   rain: RainIcon,
