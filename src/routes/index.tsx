@@ -1,26 +1,119 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
+
+import { StatusBar } from "@/components/citycascade/StatusBar";
+import { CommandSidebar } from "@/components/citycascade/CommandSidebar";
+import { MapPanel } from "@/components/citycascade/MapPanel";
+import { RiskSummary } from "@/components/citycascade/RiskSummary";
+import { ZoneRiskList } from "@/components/citycascade/ZoneRiskList";
+import { HospitalStatusPanel } from "@/components/citycascade/HospitalStatusPanel";
+import { RoadBlockPanel } from "@/components/citycascade/RoadBlockPanel";
+import { AIResponsePanel } from "@/components/citycascade/AIResponsePanel";
+import { DISASTERS } from "@/components/citycascade/data";
+import type { DisasterId } from "@/components/citycascade/icons";
 
 export const Route = createFileRoute("/")({
-  component: Index,
+  head: () => ({
+    meta: [
+      { title: "CityCascade AI — Disaster Operations Dashboard" },
+      {
+        name: "description",
+        content:
+          "CityCascade AI: cyberpunk emergency operations console for simulating urban disasters and generating AI-driven response plans.",
+      },
+    ],
+  }),
+  component: Dashboard,
 });
 
-// IMPORTANT: Replace this placeholder. For sites with multiple pages (About, Services, Contact, etc.),
-// create separate route files (about.tsx, services.tsx, contact.tsx) — don't put all pages in this file.
-function PlaceholderIndex() {
+type Status = "idle" | "simulating" | "active" | "error";
+
+function Dashboard() {
+  const [city, setCity] = useState("dhaka");
+  const [disaster, setDisaster] = useState<DisasterId | null>(null);
+  const [intensity, setIntensity] = useState(6);
+  const [status, setStatus] = useState<Status>("idle");
+
+  const disasterObj = DISASTERS.find((d) => d.id === disaster) ?? null;
+
+  function handleSimulate() {
+    if (!disaster) return;
+    setStatus("simulating");
+    window.setTimeout(() => setStatus("active"), 1600);
+  }
+  function handleReset() {
+    setStatus("idle");
+    setDisaster(null);
+    setIntensity(6);
+  }
+  function handleGenerate() {
+    if (!disaster) return;
+    setStatus("simulating");
+    window.setTimeout(() => setStatus("active"), 1200);
+  }
+
+  const cityLabel = city.toUpperCase();
+  const dbMode = "LIVE EDGE";
+
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
+    <div className="flex h-screen flex-col">
+      <StatusBar city={cityLabel} status={status} dbMode={dbMode} />
+
+      <div className="flex flex-1 gap-3 overflow-hidden p-3">
+        {/* Main column */}
+        <div className="flex flex-1 flex-col gap-3 min-w-0">
+          <RiskSummary active={status === "active"} />
+
+          <div className="flex flex-1 gap-3 min-h-0">
+            <div className="flex-1 min-w-0">
+              <MapPanel
+                disaster={disasterObj}
+                intensity={intensity}
+                status={status}
+                onSimulate={handleSimulate}
+              />
+            </div>
+
+            {/* Inner right info column */}
+            <div className="hidden xl:flex w-[300px] flex-col gap-3 overflow-y-auto">
+              <ZoneRiskList active={status === "active"} />
+              <HospitalStatusPanel active={status === "active"} />
+              <RoadBlockPanel active={status === "active"} />
+            </div>
+          </div>
+
+          {/* Bottom AI drawer */}
+          <div className="max-h-[42vh] overflow-y-auto">
+            <AIResponsePanel
+              status={status}
+              onGenerate={handleGenerate}
+              onReset={handleReset}
+            />
+          </div>
+        </div>
+
+        {/* Right command sidebar */}
+        <div className="w-[320px] shrink-0">
+          <CommandSidebar
+            city={city}
+            onCity={setCity}
+            disaster={disaster}
+            onDisaster={setDisaster}
+            intensity={intensity}
+            onIntensity={setIntensity}
+            onSimulate={handleSimulate}
+            onReset={handleReset}
+            status={status}
+          />
+        </div>
+      </div>
+
+      {/* Smaller-screen fallback panels for the inner info column */}
+      <div className="xl:hidden grid grid-cols-1 md:grid-cols-3 gap-3 p-3 pt-0">
+        <ZoneRiskList active={status === "active"} />
+        <HospitalStatusPanel active={status === "active"} />
+        <RoadBlockPanel active={status === "active"} />
+      </div>
     </div>
   );
-}
-
-function Index() {
-  return <PlaceholderIndex />;
 }
