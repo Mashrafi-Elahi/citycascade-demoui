@@ -17,4 +17,5 @@ export async function getDb(): Promise<Db> {
 export const COLL = {
   SIMULATIONS: "simulations",
   SETTINGS: "settings",
+  CITIES: "cities",
 } as const;

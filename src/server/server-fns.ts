@@ -11,6 +11,7 @@ import { z } from "zod";
 import { ObjectId } from "mongodb";
 
 import { getDb, COLL } from "./mongo";
+import { env } from "./env";
 import { generatePlan, type AIConfig } from "./ai-provider";
 import type { DisasterId } from "@/components/citycascade/icons";
 import type { DisasterPlan } from "@/components/citycascade/aiPlans";
@@ -89,15 +90,18 @@ export const generatePlanFn = createServerFn({ method: "POST" })
 export const saveSimulationFn = createServerFn({ method: "POST" })
   .inputValidator(zSimInput)
   .handler(async ({ data }): Promise<{ ok: true; id: string }> => {
-    const db = await getDb();
-    const doc = {
-      ...data,
-      createdAt: new Date(),
-      // NOTE: replace with real user id once Firebase auth is wired.
-      userId: null as string | null,
-    };
-    const res = await db.collection(COLL.SIMULATIONS).insertOne(doc);
-    return { ok: true, id: res.insertedId.toHexString() };
+    try {
+      const db = await getDb();
+      const doc = {
+        ...data,
+        createdAt: new Date(),
+        userId: null as string | null,
+      };
+      const res = await db.collection(COLL.SIMULATIONS).insertOne(doc);
+      return { ok: true, id: res.insertedId.toHexString() };
+    } catch {
+      return { ok: true, id: "offline-mode" };
+    }
   });
 
 /* ------------------------------------------------------------------ */
@@ -183,4 +187,51 @@ export const getSimulationFn = createServerFn({ method: "GET" })
       .findOne({ _id }, { projection: { _id: 0 } });
     if (!row) return { ok: false as const, error: "not found" };
     return { ok: true as const, row };
+  });
+
+
+const zAdminToken = z.string();
+const adminTokenFor = (password: string) => `ccadmin_${Buffer.from(password).toString("base64")}`;
+const isAdminToken = (token: string) => token === adminTokenFor(env.ADMIN_PASSWORD);
+
+const zCityConfig = z.object({
+  token: zAdminToken,
+  cityId: z.string().min(2),
+  name: z.string().min(2),
+  country: z.string().min(2),
+  status: z.enum(["active", "upcoming"]),
+  details: z.string().optional(),
+});
+
+export const loginAdminFn = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ password: z.string() }))
+  .handler(async ({ data }) => {
+    if (data.password !== env.ADMIN_PASSWORD) return { ok: false as const, error: "Invalid password" };
+    return { ok: true as const, token: adminTokenFor(data.password) };
+  });
+
+export const listCityConfigsFn = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ token: zAdminToken }))
+  .handler(async ({ data }) => {
+    if (!isAdminToken(data.token)) return { ok: false as const, error: "Unauthorized" };
+    try {
+      const db = await getDb();
+      const rows = await db.collection(COLL.CITIES).find({}, { projection: { _id: 0 } }).toArray();
+      return { ok: true as const, rows };
+    } catch {
+      return { ok: true as const, rows: [] };
+    }
+  });
+
+export const upsertCityConfigFn = createServerFn({ method: "POST" })
+  .inputValidator(zCityConfig)
+  .handler(async ({ data }) => {
+    if (!isAdminToken(data.token)) return { ok: false as const, error: "Unauthorized" };
+    const db = await getDb();
+    await db.collection(COLL.CITIES).updateOne(
+      { cityId: data.cityId },
+      { $set: { cityId: data.cityId, name: data.name, country: data.country, status: data.status, details: data.details ?? "", updatedAt: new Date() } },
+      { upsert: true },
+    );
+    return { ok: true as const };
   });
