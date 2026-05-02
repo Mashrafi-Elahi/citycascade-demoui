@@ -30,12 +30,15 @@ export interface CityOption {
 }
 
 export const CITIES: CityOption[] = [
-  { id: "dhaka", name: "Dhaka", country: "BD", active: true },
-  { id: "chittagong", name: "Chittagong", country: "BD", active: false },
-  { id: "kolkata", name: "Kolkata", country: "IN", active: false },
-  { id: "mumbai", name: "Mumbai", country: "IN", active: false },
-  { id: "jakarta", name: "Jakarta", country: "ID", active: false },
-  { id: "manila", name: "Manila", country: "PH", active: false },
+  { id: "dhaka", name: "Dhaka", country: "Bangladesh", active: true },
+  { id: "chittagong", name: "Chittagong", country: "Bangladesh", active: false },
+  { id: "sylhet", name: "Sylhet", country: "Bangladesh", active: false },
+  { id: "khulna", name: "Khulna", country: "Bangladesh", active: false },
+  { id: "rajshahi", name: "Rajshahi", country: "Bangladesh", active: false },
+  { id: "tokyo", name: "Tokyo", country: "Japan", active: false },
+  { id: "newyork", name: "New York", country: "United States", active: false },
+  { id: "jakarta", name: "Jakarta", country: "Indonesia", active: false },
+  { id: "manila", name: "Manila", country: "Philippines", active: false },
 ];
 
 export interface ZoneRisk {

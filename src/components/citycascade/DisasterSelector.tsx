@@ -16,19 +16,20 @@ const TONE: Record<Disaster["tone"], string> = {
 
 export function DisasterSelector({ selected, onSelect }: Props) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-testid="disaster-selector">
       <SectionLabel>Disaster Vector</SectionLabel>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-1.5">
         {DISASTERS.map((d) => {
           const Icon = DisasterIconMap[d.id];
           const isSel = selected === d.id;
           const c = TONE[d.tone];
           return (
             <button
+              data-testid={`disaster-item-${d.id}`}
               key={d.id}
               onClick={() => onSelect(d.id)}
               className={[
-                "group relative overflow-hidden rounded-md border bg-background/40 px-3 py-2.5 text-left transition",
+                "group relative overflow-hidden rounded-md border bg-background/40 px-2 py-2 text-left transition min-h-[60px]",
                 "hover:bg-background/70",
                 isSel ? "border-transparent" : "border-border/50",
               ].join(" ")}
@@ -42,18 +43,20 @@ export function DisasterSelector({ selected, onSelect }: Props) {
                   : undefined
               }
             >
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-start gap-2">
                 <span
-                  className="grid h-8 w-8 place-items-center rounded-md border bg-background/60"
-                  style={{ borderColor: `${c}`, color: c }}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-md border bg-background/60"
+                  style={{ borderColor: c, color: c }}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-3.5 w-3.5" />
                 </span>
-                <div className="min-w-0">
-                  <div className="truncate text-[12px] font-display tracking-widest text-foreground">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-display tracking-[0.1em] text-foreground leading-tight break-words">
                     {d.name}
                   </div>
-                  <div className="text-[10px] text-muted-foreground tracking-widest">{d.short}</div>
+                  <div className="mt-0.5 text-[9px] text-muted-foreground tracking-widest">
+                    {d.short}
+                  </div>
                 </div>
               </div>
               {isSel && (

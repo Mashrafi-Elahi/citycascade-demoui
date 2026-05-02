@@ -215,6 +215,25 @@ export const ClockIcon = (p: IconProps) => (
     <path d="M12 7v5l3 2" />
   </svg>
 );
+export const SearchIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="M20 20l-3.5-3.5" />
+  </svg>
+);
+export const BrushIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <path d="M14 3l7 7-9 9-5 1 1-5 6-12z" />
+    <path d="M9 19l-4 2 2-4" />
+  </svg>
+);
+export const TargetIcon = (p: IconProps) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="5" />
+    <circle cx="12" cy="12" r="1.4" />
+  </svg>
+);
 
 export type DisasterId =
   | "flood" | "fire" | "rain" | "earthquake" | "crash"
