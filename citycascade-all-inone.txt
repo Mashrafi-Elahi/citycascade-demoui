@@ -1,0 +1,1659 @@
+// ============================================================
+// CityCascade AI — FULL SOURCE
+// ============================================================
+// HOW TO SPLIT INTO FILES:
+//   Each section starts with: // FILE: path/to/file.ext
+//   Create that file, paste the content between it and the next FILE: marker.
+//   Required folder structure:
+//
+//   citycascade-ai/
+//   ├── package.json
+//   ├── next.config.ts
+//   ├── tsconfig.json
+//   ├── tailwind.config.js
+//   ├── postcss.config.js
+//   ├── .env.local                 ← create manually, not here
+//   ├── data/
+//   │   ├── types.ts
+//   │   ├── cityRegistry.ts
+//   │   └── cities/
+//   │       └── dhaka.ts           ← copy to add new city
+//   ├── lib/
+//   │   ├── cascade.ts
+//   │   ├── ai.ts
+//   │   └── mongodb.ts
+//   ├── components/
+//   │   ├── Map/CityMap.tsx
+//   │   └── Panel/SidePanel.tsx
+//   └── app/
+//       ├── layout.tsx
+//       ├── page.tsx
+//       ├── globals.css
+//       └── api/
+//           ├── cascade/route.ts
+//           ├── ai-response/route.ts
+//           └── save-simulation/route.ts
+//
+// TO ADD A NEW CITY:
+//   1. Copy the dhaka.ts section → new file data/cities/yourcity.ts
+//   2. Change all zone/hospital/contact data
+//   3. In cityRegistry.ts: import yourcityConfig and add to CITIES map
+//   That's it. Zero other files change.
+// ============================================================
+
+
+
+
+// ============================================================
+// FILE: package.json
+// ============================================================
+/*
+{
+  "name": "citycascade-ai",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "15.3.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "leaflet": "^1.9.4",
+    "geist": "^1.3.1",
+    "mongodb": "^6.8.0"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.14",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "tailwindcss": "^3.4.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "typescript": "^5"
+  }
+}
+*/
+
+
+
+
+// ============================================================
+// FILE: next.config.ts
+// ============================================================
+/*
+import type { NextConfig } from 'next';
+const nextConfig: NextConfig = {
+  transpilePackages: ['leaflet'],
+};
+export default nextConfig;
+*/
+
+
+
+
+// ============================================================
+// FILE: tsconfig.json
+// ============================================================
+/*
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+*/
+
+
+
+
+// ============================================================
+// FILE: tailwind.config.js
+// ============================================================
+/*
+module.exports = {
+  content: ['./app/** /*.{ts,tsx}', './components/** /*.{ts,tsx}'],
+  theme: { extend: {} },
+  plugins: [],
+};
+*/
+
+
+
+
+// ============================================================
+// FILE: postcss.config.js
+// ============================================================
+/*
+module.exports = {
+  plugins: { tailwindcss: {}, autoprefixer: {} },
+};
+*/
+
+
+
+
+// ============================================================
+// FILE: .env.local   ← create this manually, never commit it
+// ============================================================
+/*
+GEMINI_API_KEY=your_gemini_key_here
+MONGODB_URI=your_mongodb_uri_here
+*/
+
+
+
+
+// ============================================================
+// FILE: data/types.ts
+// PURPOSE: All shared TypeScript interfaces. Every city config
+//          and every component imports from here.
+//          This is the contract — change here, everything updates.
+// ============================================================
+
+export type DisasterType = 'FLOOD' | 'FIRE' | 'EARTHQUAKE' | 'DISEASE' | 'HEATWAVE';
+export type RiskLevel = 'safe' | 'low' | 'moderate' | 'high' | 'critical';
+export type ElevationType = 'low' | 'medium' | 'high';
+
+export const ELEVATION_METERS: Record<ElevationType, number> = {
+  low: 1.5,
+  medium: 4.5,
+  high: 8.0,
+};
+
+export const DRAINAGE_QUALITY: Record<string, number> = {
+  poor: 0.2,
+  moderate: 0.5,
+  good: 0.8,
+};
+
+export interface Hospital {
+  id: string;
+  name: string;
+  position: [number, number];
+  capacity: number;
+  currentLoad?: number; // 0-1, default 0.6
+  phone: string;
+  specializations?: string[];
+}
+
+export interface WaterSource {
+  id: string;
+  name: string;
+  type: 'tap' | 'well' | 'reservoir' | 'river';
+  position: [number, number];
+  contamRisk?: number; // 0-1
+}
+
+export interface EmergencyService {
+  id: string;
+  name: string;
+  phone: string;
+  address?: string;
+  position?: [number, number];
+  type: 'police' | 'fire' | 'ambulance' | 'rescue' | 'utility' | 'ngo';
+  coverage?: string[]; // zone ids
+}
+
+export interface EmergencyContacts {
+  nationalEmergency: string;
+  police: EmergencyService[];
+  fire: EmergencyService[];
+  ambulance: EmergencyService[];
+  rescue: EmergencyService[];
+  utility: EmergencyService[];
+}
+
+export interface Zone {
+  id: string;
+  name: string;
+  center: [number, number];
+  polygon: [number, number][];
+  neighbors: string[];
+  elevation: ElevationType;
+  drainage: 'poor' | 'moderate' | 'good';
+  population: number;
+  buildingDensity?: number; // 0-1, used for fire spread
+  soilType?: 'clay' | 'silt' | 'sand'; // used for earthquake amplification
+  floodHistory?: 'none' | 'low' | 'moderate' | 'high';
+  hospitals: Hospital[];
+  waterSources: WaterSource[];
+  roadNames: string[];
+}
+
+export interface ZoneImpact {
+  zoneId: string;
+  riskLevel: RiskLevel;
+  intensity: number; // 0-1 cascade power at this zone
+  // Disaster-specific (only one set will be populated per run)
+  floodDepth?: number;        // meters
+  fireSpreadPct?: number;     // 0-1
+  groundShakingMMI?: number;  // 1-12 Modified Mercalli
+  diseaseRisk?: number;       // 0-1
+  heatStressIndex?: number;   // °C feels-like
+  // Infrastructure (all 0-1)
+  hospitalCapacityLoss: number;
+  roadBlockedPct: number;
+  waterContamRisk: number;
+  displacedPopulation: number;
+  // Routing output
+  nearestHospitalId?: string;
+  hospitalRoute?: [number, number][];
+}
+
+export interface CascadeResult {
+  disasterType: DisasterType;
+  epicenterZoneId: string;
+  intensity: number;
+  impacts: Record<string, ZoneImpact>;
+  totalAffectedPop: number;
+  criticalZoneIds: string[];
+  blockedRoadNames: string[];
+  overwhelmedHospitalIds: string[];
+  timestamp: number;
+}
+
+export interface AIResponsePlan {
+  summary: string;
+  emergencyRouting: string[];
+  hospitalAllocation: string[];
+  publicHealth: string[];
+  infrastructure: string[];
+  evacuation: string[];
+  contacts: string[];
+}
+
+// ── CITY CONFIG CONTRACT ──────────────────────────────────────
+// TO ADD A NEW CITY: implement this interface in data/cities/yourcity.ts
+// then register it in data/cityRegistry.ts. Nothing else changes.
+export interface CityConfig {
+  id: string;
+  name: string;
+  country: string;
+  flag?: string;
+  center: [number, number];
+  zoom: number;
+  timezone?: string;
+  zones: Zone[];
+  emergencyContacts: EmergencyContacts;
+}
+
+
+
+
+// ============================================================
+// FILE: data/cityRegistry.ts
+// PURPOSE: One-line registration for each city.
+//          TO ADD A CITY: import its config + add to CITIES below.
+// ============================================================
+
+// -- IMPORTS (uncomment / add as you create new city files) --
+// import { dhakaConfig } from './cities/dhaka';
+// import { chittagongConfig } from './cities/chittagong';
+
+// import { CityConfig } from './types';
+//
+// export const CITIES: Record<string, CityConfig> = {
+//   dhaka: dhakaConfig,
+//   // chittagong: chittagongConfig,
+// };
+//
+// export const DEFAULT_CITY = 'dhaka';
+//
+// export function getCity(id: string): CityConfig {
+//   return CITIES[id] ?? CITIES[DEFAULT_CITY];
+// }
+//
+// export function listCities() {
+//   return Object.values(CITIES).map(({ id, name, country, flag }) => ({ id, name, country, flag }));
+// }
+
+
+
+
+// ============================================================
+// FILE: data/cities/dhaka.ts
+// PURPOSE: Dhaka city data — 19 real zones, real hospitals with
+//          phone numbers, real emergency services.
+// TO ADD ANOTHER CITY: copy this entire file, rename the export,
+//          replace all data. Shape must match CityConfig from types.ts.
+// ============================================================
+
+// import { CityConfig } from '../types';
+//
+// export const dhakaConfig: CityConfig = {
+//   id: 'dhaka',
+//   name: 'Dhaka',
+//   country: 'Bangladesh',
+//   flag: '🇧🇩',
+//   center: [23.7761, 90.3990],
+//   zoom: 12,
+//   timezone: 'Asia/Dhaka',
+//
+//   emergencyContacts: {
+//     nationalEmergency: '999',
+//     police: [
+//       { id: 'p1', name: 'Dhaka Metropolitan Police HQ', phone: '02-9570141',
+//         address: 'DMP HQ, Minto Road, Ramna', position: [23.7376, 90.3967], type: 'police' },
+//       { id: 'p2', name: 'Mirpur Police Station', phone: '02-9004512',
+//         address: 'Mirpur 10 Circle', position: [23.806, 90.367], type: 'police',
+//         coverage: ['mirpur', 'pallabi', 'adabor'] },
+//       { id: 'p3', name: 'Gulshan Police Station', phone: '02-9882261',
+//         address: 'Gulshan Avenue', position: [23.791, 90.408], type: 'police',
+//         coverage: ['gulshan', 'banani', 'rampura'] },
+//       { id: 'p4', name: 'Lalbagh Police Station', phone: '02-9665820',
+//         address: 'Lalbagh Fort Area', position: [23.720, 90.388], type: 'police',
+//         coverage: ['lalbagh', 'hazaribagh', 'chawkbazar', 'sadarghat'] },
+//       { id: 'p5', name: 'Motijheel Police Station', phone: '02-9562901',
+//         address: 'Dilkusha, Motijheel', position: [23.726, 90.420], type: 'police',
+//         coverage: ['motijheel', 'demra'] },
+//     ],
+//     fire: [
+//       { id: 'f1', name: 'Fire Service & Civil Defence HQ', phone: '9555555',
+//         address: 'Fullbaria, Dhaka', position: [23.7271, 90.4138], type: 'fire' },
+//       { id: 'f2', name: 'Bangladesh Fire Hotline', phone: '16003', type: 'fire' },
+//       { id: 'f3', name: 'Tejgaon Fire Station', phone: '02-9128788',
+//         address: 'Tejgaon Industrial Area', position: [23.769, 90.394], type: 'fire',
+//         coverage: ['tejgaon', 'banani', 'kafrul', 'mohammadpur'] },
+//       { id: 'f4', name: 'Lalbagh Fire Station', phone: '02-9330600',
+//         address: 'Lalbagh Road', position: [23.721, 90.385], type: 'fire',
+//         coverage: ['lalbagh', 'hazaribagh', 'chawkbazar', 'keraniganj'] },
+//       { id: 'f5', name: 'Mirpur Fire Station', phone: '02-9006011',
+//         address: 'Mirpur Section 2', position: [23.810, 90.365], type: 'fire',
+//         coverage: ['mirpur', 'pallabi', 'adabor'] },
+//     ],
+//     ambulance: [
+//       { id: 'a1', name: 'Government Ambulance (DGHS)', phone: '16000', type: 'ambulance' },
+//       { id: 'a2', name: 'National Ambulance Service', phone: '01169-023456', type: 'ambulance' },
+//       { id: 'a3', name: 'Emergency Ambulance', phone: '199', type: 'ambulance' },
+//     ],
+//     rescue: [
+//       { id: 'r1', name: 'Bangladesh Army Disaster Response', phone: '1900', type: 'rescue' },
+//       { id: 'r2', name: 'DNCC Disaster Management', phone: '02-9893126',
+//         address: 'DNCC Office, Gulshan', position: [23.789, 90.414], type: 'rescue' },
+//       { id: 'r3', name: 'BDRCS (Red Crescent)', phone: '02-9116775', type: 'rescue' },
+//     ],
+//     utility: [
+//       { id: 'u1', name: 'WASA Emergency (Water)', phone: '9560415', type: 'utility' },
+//       { id: 'u2', name: 'DESCO Emergency (Electricity)', phone: '16120', type: 'utility' },
+//       { id: 'u3', name: 'Titas Gas Emergency', phone: '16499', type: 'utility' },
+//     ],
+//   },
+//
+//   zones: [
+//     {
+//       id: 'mirpur', name: 'Mirpur', center: [23.8050, 90.3668],
+//       polygon: [[23.790,90.350],[23.790,90.386],[23.822,90.386],[23.822,90.350]],
+//       neighbors: ['pallabi','kafrul','mohammadpur','adabor'],
+//       elevation: 'low', drainage: 'poor', population: 650000,
+//       buildingDensity: 0.78, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [{ id:'w-mirpur', name:'Mirpur WASA Line', type:'tap',
+//         position:[23.800,90.365], contamRisk:0.4 }],
+//       hospitals: [
+//         { id:'h-nhf', name:'National Heart Foundation', position:[23.7930,90.3680],
+//           capacity:300, currentLoad:0.65, phone:'02-9001024',
+//           specializations:['Cardiology','Emergency'] },
+//         { id:'h-mirpur-gen', name:'Mirpur General Hospital', position:[23.806,90.370],
+//           capacity:200, currentLoad:0.55, phone:'02-9005611' },
+//       ],
+//       roadNames: ['Mirpur Road','Section 10 Road','Zoo Road','Rokeya Sarani'],
+//     },
+//     {
+//       id: 'pallabi', name: 'Pallabi', center: [23.8257, 90.3648],
+//       polygon: [[23.820,90.350],[23.820,90.382],[23.843,90.382],[23.843,90.350]],
+//       neighbors: ['mirpur','uttara'], elevation: 'low', drainage: 'poor', population: 380000,
+//       buildingDensity: 0.72, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [{ id:'w-pallabi', name:'Pallabi Pump Station', type:'tap',
+//         position:[23.825,90.364], contamRisk:0.5 }],
+//       hospitals: [], roadNames: ['Pallabi Main Road','Rokeya Sarani Extension'],
+//     },
+//     {
+//       id: 'uttara', name: 'Uttara', center: [23.8759, 90.3795],
+//       polygon: [[23.860,90.365],[23.860,90.398],[23.895,90.398],[23.895,90.365]],
+//       neighbors: ['pallabi','kafrul'], elevation: 'medium', drainage: 'good', population: 420000,
+//       buildingDensity: 0.55, soilType: 'sand', floodHistory: 'low',
+//       waterSources: [{ id:'w-uttara', name:'Uttara WASA Network', type:'tap',
+//         position:[23.874,90.378], contamRisk:0.1 }],
+//       hospitals: [{ id:'h-uttara', name:'Uttara Adhunik Medical College',
+//         position:[23.876,90.379], capacity:350, currentLoad:0.50,
+//         phone:'02-8931001', specializations:['Trauma','Emergency'] }],
+//       roadNames: ['Airport Road','Uttara Sector 3 Road','Jasimuddin Road'],
+//     },
+//     {
+//       id: 'kafrul', name: 'Kafrul', center: [23.7981, 90.3770],
+//       polygon: [[23.787,90.367],[23.787,90.390],[23.812,90.390],[23.812,90.367]],
+//       neighbors: ['mirpur','uttara','tejgaon','banani'],
+//       elevation: 'medium', drainage: 'moderate', population: 290000,
+//       buildingDensity: 0.60, soilType: 'silt', floodHistory: 'moderate',
+//       waterSources: [], hospitals: [],
+//       roadNames: ['Kafrul Road','Agargaon Road','Sher-e-Bangla Nagar Road'],
+//     },
+//     {
+//       id: 'gulshan', name: 'Gulshan', center: [23.7925, 90.4078],
+//       polygon: [[23.778,90.398],[23.778,90.422],[23.810,90.422],[23.810,90.398]],
+//       neighbors: ['banani','rampura','tejgaon'],
+//       elevation: 'medium', drainage: 'good', population: 250000,
+//       buildingDensity: 0.45, soilType: 'sand', floodHistory: 'low',
+//       waterSources: [{ id:'w-gulshan', name:'Gulshan Lake', type:'reservoir',
+//         position:[23.791,90.410], contamRisk:0.05 }],
+//       hospitals: [
+//         { id:'h-united', name:'United Hospital', position:[23.7934,90.4147],
+//           capacity:450, currentLoad:0.50, phone:'02-8836000',
+//           specializations:['ICU','Surgery','Burn Unit','Emergency'] },
+//         { id:'h-apollo', name:'Apollo Hospitals Dhaka', position:[23.8196,90.4334],
+//           capacity:400, currentLoad:0.55, phone:'10678',
+//           specializations:['Oncology','Neurology','Cardiac'] },
+//       ],
+//       roadNames: ['Gulshan Avenue','Gulshan Circle 1','Gulshan Circle 2'],
+//     },
+//     {
+//       id: 'banani', name: 'Banani', center: [23.7934, 90.4037],
+//       polygon: [[23.784,90.394],[23.784,90.413],[23.804,90.413],[23.804,90.394]],
+//       neighbors: ['gulshan','tejgaon','kafrul'],
+//       elevation: 'medium', drainage: 'moderate', population: 180000,
+//       buildingDensity: 0.65, soilType: 'silt', floodHistory: 'low',
+//       waterSources: [], hospitals: [],
+//       roadNames: ['Banani Road 11','Kamal Ataturk Avenue','Banani Main Road'],
+//     },
+//     {
+//       id: 'tejgaon', name: 'Tejgaon', center: [23.7677, 90.3903],
+//       polygon: [[23.755,90.380],[23.755,90.404],[23.781,90.404],[23.781,90.380]],
+//       neighbors: ['kafrul','banani','gulshan','dhanmondi','mohammadpur'],
+//       elevation: 'medium', drainage: 'moderate', population: 320000,
+//       buildingDensity: 0.70, soilType: 'silt', floodHistory: 'moderate',
+//       waterSources: [],
+//       hospitals: [{ id:'h-square', name:'Square Hospital', position:[23.7504,90.3868],
+//         capacity:350, currentLoad:0.60, phone:'02-8159457',
+//         specializations:['Surgery','ICU','Pediatrics','Emergency'] }],
+//       roadNames: ['Tejgaon Industrial Area Road','Bijoy Sarani','Kazi Nazrul Islam Avenue'],
+//     },
+//     {
+//       id: 'dhanmondi', name: 'Dhanmondi', center: [23.7461, 90.3742],
+//       polygon: [[23.736,90.365],[23.736,90.386],[23.758,90.386],[23.758,90.365]],
+//       neighbors: ['mohammadpur','tejgaon','lalbagh'],
+//       elevation: 'medium', drainage: 'moderate', population: 350000,
+//       buildingDensity: 0.72, soilType: 'silt', floodHistory: 'moderate',
+//       waterSources: [{ id:'w-dhanmondi', name:'Dhanmondi Lake', type:'reservoir',
+//         position:[23.748,90.376], contamRisk:0.15 }],
+//       hospitals: [
+//         { id:'h-ibnsina', name:'Ibn Sina Hospital Dhanmondi', position:[23.747,90.374],
+//           capacity:200, currentLoad:0.62, phone:'02-9661936',
+//           specializations:['General','Diagnostics'] },
+//         { id:'h-popular', name:'Popular Medical Centre', position:[23.743,90.371],
+//           capacity:150, currentLoad:0.70, phone:'02-9667359' },
+//       ],
+//       roadNames: ['Mirpur Road','Satmasjid Road','Road 27','Green Road'],
+//     },
+//     {
+//       id: 'mohammadpur', name: 'Mohammadpur', center: [23.7644, 90.3581],
+//       polygon: [[23.752,90.348],[23.752,90.372],[23.778,90.372],[23.778,90.348]],
+//       neighbors: ['mirpur','dhanmondi','tejgaon','adabor'],
+//       elevation: 'low', drainage: 'poor', population: 480000,
+//       buildingDensity: 0.82, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [],
+//       hospitals: [{ id:'h-mohammadpur', name:'Mohammadpur Central Hospital',
+//         position:[23.764,90.358], capacity:150, currentLoad:0.75, phone:'02-9110091' }],
+//       roadNames: ['Asad Avenue','Tajmahal Road','Mohammadpur Bus Stand Road'],
+//     },
+//     {
+//       id: 'adabor', name: 'Adabor', center: [23.7700, 90.3450],
+//       polygon: [[23.760,90.336],[23.760,90.356],[23.781,90.356],[23.781,90.336]],
+//       neighbors: ['mohammadpur','mirpur'],
+//       elevation: 'low', drainage: 'poor', population: 310000,
+//       buildingDensity: 0.75, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [], hospitals: [], roadNames: ['Adabor Road','Ring Road'],
+//     },
+//     {
+//       id: 'lalbagh', name: 'Lalbagh', center: [23.7196, 90.3876],
+//       polygon: [[23.710,90.378],[23.710,90.400],[23.731,90.400],[23.731,90.378]],
+//       neighbors: ['dhanmondi','hazaribagh','chawkbazar'],
+//       elevation: 'low', drainage: 'poor', population: 420000,
+//       buildingDensity: 0.88, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [],
+//       hospitals: [{ id:'h-salimullah', name:'Sir Salimullah Medical College',
+//         position:[23.7173,90.4084], capacity:500, currentLoad:0.80, phone:'02-7310341',
+//         specializations:['General Surgery','Medicine','Emergency'] }],
+//       roadNames: ['Lalbagh Road','Nabab Sirajuddoula Road','Buriganga Riverfront Road'],
+//     },
+//     {
+//       id: 'hazaribagh', name: 'Hazaribagh', center: [23.7220, 90.3720],
+//       polygon: [[23.712,90.362],[23.712,90.383],[23.733,90.383],[23.733,90.362]],
+//       neighbors: ['lalbagh','mohammadpur','keraniganj'],
+//       elevation: 'low', drainage: 'poor', population: 280000,
+//       buildingDensity: 0.80, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [], hospitals: [], roadNames: ['Hazaribagh Tannery Road'],
+//     },
+//     {
+//       id: 'chawkbazar', name: 'Chawkbazar', center: [23.7238, 90.4085],
+//       polygon: [[23.714,90.398],[23.714,90.420],[23.735,90.420],[23.735,90.398]],
+//       neighbors: ['lalbagh','motijheel','sadarghat'],
+//       elevation: 'low', drainage: 'poor', population: 350000,
+//       buildingDensity: 0.90, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [],
+//       hospitals: [
+//         { id:'h-dmch', name:'Dhaka Medical College Hospital', position:[23.7284,90.3947],
+//           capacity:800, currentLoad:0.85, phone:'02-55167601',
+//           specializations:['Trauma','Burns','Neurosurgery','Emergency'] },
+//         { id:'h-bsmmu', name:'Bangabandhu Sheikh Mujib Medical University',
+//           position:[23.7378,90.3951], capacity:600, currentLoad:0.75, phone:'02-9661065',
+//           specializations:['Oncology','Transplant','Neurology'] },
+//       ],
+//       roadNames: ['Chawkbazar Road','Nawabpur Road','Islampur Road'],
+//     },
+//     {
+//       id: 'motijheel', name: 'Motijheel', center: [23.7238, 90.4185],
+//       polygon: [[23.714,90.410],[23.714,90.430],[23.735,90.430],[23.735,90.410]],
+//       neighbors: ['chawkbazar','rampura','demra'],
+//       elevation: 'medium', drainage: 'moderate', population: 220000,
+//       buildingDensity: 0.65, soilType: 'silt', floodHistory: 'moderate',
+//       waterSources: [],
+//       hospitals: [{ id:'h-birdem', name:'BIRDEM General Hospital',
+//         position:[23.7402,90.3907], capacity:400, currentLoad:0.65, phone:'02-9661551',
+//         specializations:['Diabetes','Endocrinology','General Medicine'] }],
+//       roadNames: ['Dilkusha Commercial Road','Shapla Chattar Road','Bangabandhu Avenue'],
+//     },
+//     {
+//       id: 'sadarghat', name: 'Sadarghat', center: [23.7100, 90.4100],
+//       polygon: [[23.702,90.402],[23.702,90.422],[23.718,90.422],[23.718,90.402]],
+//       neighbors: ['chawkbazar','motijheel'],
+//       elevation: 'low', drainage: 'poor', population: 180000,
+//       buildingDensity: 0.85, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [{ id:'w-buriganga', name:'Buriganga River', type:'river',
+//         position:[23.705,90.412], contamRisk:0.9 }],
+//       hospitals: [], roadNames: ['Strand Road','Sadarghat Launch Terminal Road'],
+//     },
+//     {
+//       id: 'rampura', name: 'Rampura', center: [23.7573, 90.4262],
+//       polygon: [[23.746,90.416],[23.746,90.438],[23.770,90.438],[23.770,90.416]],
+//       neighbors: ['gulshan','motijheel','demra','banani'],
+//       elevation: 'low', drainage: 'moderate', population: 390000,
+//       buildingDensity: 0.70, soilType: 'silt', floodHistory: 'moderate',
+//       waterSources: [{ id:'w-rampura', name:'Rampura Canal', type:'reservoir',
+//         position:[23.757,90.426], contamRisk:0.6 }],
+//       hospitals: [], roadNames: ['Rampura Bridge Road','DIT Road Extension'],
+//     },
+//     {
+//       id: 'demra', name: 'Demra', center: [23.7081, 90.4617],
+//       polygon: [[23.695,90.450],[23.695,90.475],[23.723,90.475],[23.723,90.450]],
+//       neighbors: ['rampura','motijheel','narayanganj'],
+//       elevation: 'low', drainage: 'poor', population: 510000,
+//       buildingDensity: 0.76, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [], hospitals: [], roadNames: ['Demra Road','Buriganga Bridge Road'],
+//     },
+//     {
+//       id: 'keraniganj', name: 'Keraniganj', center: [23.7050, 90.3680],
+//       polygon: [[23.693,90.357],[23.693,90.382],[23.718,90.382],[23.718,90.357]],
+//       neighbors: ['hazaribagh','lalbagh'],
+//       elevation: 'low', drainage: 'poor', population: 640000,
+//       buildingDensity: 0.65, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [{ id:'w-kerani', name:'Buriganga River Bank', type:'river',
+//         position:[23.705,90.367], contamRisk:0.85 }],
+//       hospitals: [], roadNames: ['Keraniganj Ferry Road','Postogola Bridge Road'],
+//     },
+//     {
+//       id: 'narayanganj', name: 'Narayanganj', center: [23.6238, 90.4990],
+//       polygon: [[23.610,90.487],[23.610,90.513],[23.639,90.513],[23.639,90.487]],
+//       neighbors: ['demra'],
+//       elevation: 'low', drainage: 'poor', population: 720000,
+//       buildingDensity: 0.70, soilType: 'clay', floodHistory: 'high',
+//       waterSources: [],
+//       hospitals: [{ id:'h-narayanganj', name:'Narayanganj General Hospital',
+//         position:[23.624,90.499], capacity:350, currentLoad:0.55, phone:'02-7641005',
+//         specializations:['General Medicine','Emergency'] }],
+//       roadNames: ['Dhaka-Narayanganj Road','Sitalakshya Bridge Road'],
+//     },
+//   ],
+// };
+
+
+
+
+// ============================================================
+// FILE: lib/cascade.ts
+// PURPOSE: BFS cascade engine. 5 disaster types, each with its
+//          own spread physics and infrastructure impact math.
+//          Also routes each zone to nearest open hospital.
+// ============================================================
+
+// import {
+//   CityConfig, Zone, DisasterType, RiskLevel,
+//   ZoneImpact, CascadeResult, ELEVATION_METERS, DRAINAGE_QUALITY,
+// } from '@/data/types';
+//
+// function classifyRisk(intensity: number): RiskLevel {
+//   if (intensity >= 0.80) return 'critical';
+//   if (intensity >= 0.55) return 'high';
+//   if (intensity >= 0.30) return 'moderate';
+//   if (intensity >= 0.10) return 'low';
+//   return 'safe';
+// }
+//
+// // How much crisis power transfers from one zone to its neighbor.
+// // Different physics per disaster type.
+// function spreadFactor(from: Zone, to: Zone, type: DisasterType): number {
+//   const fromElev = ELEVATION_METERS[from.elevation];
+//   const toElev   = ELEVATION_METERS[to.elevation];
+//   const toDrain  = DRAINAGE_QUALITY[to.drainage];
+//   switch (type) {
+//     case 'FLOOD': {
+//       const elevDiff = fromElev - toElev;
+//       const downhill = Math.max(0, 0.5 + elevDiff * 0.15);
+//       return downhill * (1 - toDrain * 0.7) * 0.75;
+//     }
+//     case 'FIRE': {
+//       const density = to.buildingDensity ?? 0.6;
+//       return 0.5 * density * 0.8;
+//     }
+//     case 'EARTHQUAKE': {
+//       const soilAmp = to.soilType === 'clay' ? 1.3 : to.soilType === 'silt' ? 1.1 : 0.9;
+//       return 0.65 * soilAmp * 0.7;
+//     }
+//     case 'DISEASE': {
+//       const popFactor = Math.min(1, to.population / 500000);
+//       const waterRisk = to.waterSources.some(w => (w.contamRisk ?? 0) > 0.5) ? 1.3 : 1.0;
+//       return 0.55 * popFactor * waterRisk * 0.7;
+//     }
+//     case 'HEATWAVE': {
+//       const density = to.buildingDensity ?? 0.6;
+//       return 0.80 * (0.8 + density * 0.2);
+//     }
+//   }
+// }
+//
+// function computeImpact(zone: Zone, type: DisasterType, power: number) {
+//   const elevation = ELEVATION_METERS[zone.elevation];
+//   const drainage  = DRAINAGE_QUALITY[zone.drainage];
+//   const density   = zone.buildingDensity ?? 0.6;
+//   const pop       = zone.population;
+//   switch (type) {
+//     case 'FLOOD': {
+//       const floodDepth          = Math.max(0, power * (1 - elevation / 10) * (1 - drainage));
+//       const roadBlockedPct      = Math.min(1, floodDepth / 2.0);
+//       const waterContamRisk     = floodDepth * 0.7;
+//       const diseaseRisk         = waterContamRisk * 0.5;
+//       const hospitalCapacityLoss= power * 0.3;
+//       const displacedPopulation = Math.round(pop * power * (floodDepth > 1.5 ? 0.4 : 0.2));
+//       return { floodDepth, roadBlockedPct, waterContamRisk, diseaseRisk, hospitalCapacityLoss, displacedPopulation };
+//     }
+//     case 'FIRE': {
+//       const fireSpreadPct        = power * density;
+//       const roadBlockedPct       = fireSpreadPct * 0.5;
+//       const hospitalCapacityLoss = power * 0.4;
+//       const displacedPopulation  = Math.round(pop * fireSpreadPct * 0.6);
+//       return { fireSpreadPct, roadBlockedPct, waterContamRisk: 0, hospitalCapacityLoss, displacedPopulation };
+//     }
+//     case 'EARTHQUAKE': {
+//       const soilAmp              = zone.soilType === 'clay' ? 1.4 : zone.soilType === 'silt' ? 1.2 : 1.0;
+//       const groundShakingMMI     = Math.min(12, power * 10 * soilAmp);
+//       const roadBlockedPct       = Math.min(1, power * soilAmp * 0.6);
+//       const hospitalCapacityLoss = Math.min(1, power * soilAmp * 0.7);
+//       const waterContamRisk      = power * 0.4;
+//       const displacedPopulation  = Math.round(pop * power * 0.5);
+//       return { groundShakingMMI, roadBlockedPct, waterContamRisk, hospitalCapacityLoss, displacedPopulation };
+//     }
+//     case 'DISEASE': {
+//       const contamWater          = zone.waterSources.some(w => (w.contamRisk ?? 0) > 0.5);
+//       const diseaseRisk          = Math.min(1, power * (contamWater ? 1.5 : 1.0) * (pop / 500000));
+//       const hospitalCapacityLoss = diseaseRisk * 0.8;
+//       const waterContamRisk      = contamWater ? 0.8 : power * 0.3;
+//       return { diseaseRisk, hospitalCapacityLoss, roadBlockedPct: 0, waterContamRisk, displacedPopulation: 0 };
+//     }
+//     case 'HEATWAVE': {
+//       const heatStressIndex      = 35 + power * 20;
+//       const hospitalCapacityLoss = power * 0.35;
+//       const waterContamRisk      = power * 0.2;
+//       return { heatStressIndex, hospitalCapacityLoss, roadBlockedPct: 0, waterContamRisk, displacedPopulation: 0 };
+//     }
+//   }
+// }
+//
+// function findNearestHospital(zone: Zone, impacts: Record<string, ZoneImpact>, city: CityConfig) {
+//   let best: { hospitalId: string; route: [number, number][]; dist: number } | null = null;
+//   for (const z of city.zones) {
+//     for (const h of z.hospitals) {
+//       const loss = impacts[z.id]?.hospitalCapacityLoss ?? 0;
+//       const available = (1 - (h.currentLoad ?? 0.6)) - loss;
+//       if (available <= 0.05) continue;
+//       const dLat = h.position[0] - zone.center[0];
+//       const dLng = h.position[1] - zone.center[1];
+//       const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+//       if (!best || dist < best.dist)
+//         best = { hospitalId: h.id, dist, route: [zone.center, h.position] };
+//     }
+//   }
+//   return best;
+// }
+//
+// export function runCascade(
+//   city: CityConfig,
+//   epicenterZoneId: string,
+//   disasterType: DisasterType,
+//   initialIntensity: number
+// ): CascadeResult {
+//   const zoneMap: Record<string, Zone> = {};
+//   for (const z of city.zones) zoneMap[z.id] = z;
+//
+//   const impacts: Record<string, ZoneImpact> = {};
+//   const queue = [{ zoneId: epicenterZoneId, power: initialIntensity }];
+//   const visited = new Set<string>();
+//
+//   while (queue.length > 0) {
+//     const { zoneId, power } = queue.shift()!;
+//     if (visited.has(zoneId) || power < 0.08) continue;
+//     visited.add(zoneId);
+//     const zone = zoneMap[zoneId];
+//     if (!zone) continue;
+//     const specific = computeImpact(zone, disasterType, power);
+//     impacts[zoneId] = { zoneId, intensity: power, riskLevel: classifyRisk(power), ...specific } as ZoneImpact;
+//     for (const neighborId of zone.neighbors) {
+//       if (!visited.has(neighborId) && zoneMap[neighborId]) {
+//         const sf = spreadFactor(zone, zoneMap[neighborId], disasterType);
+//         const neighborPower = power * sf;
+//         if (neighborPower >= 0.08) queue.push({ zoneId: neighborId, power: neighborPower });
+//       }
+//     }
+//   }
+//
+//   for (const zoneId of Object.keys(impacts)) {
+//     const nearest = findNearestHospital(zoneMap[zoneId], impacts, city);
+//     if (nearest) {
+//       impacts[zoneId].nearestHospitalId = nearest.hospitalId;
+//       impacts[zoneId].hospitalRoute = nearest.route;
+//     }
+//   }
+//
+//   const totalAffectedPop = Object.values(impacts).reduce((s, i) => s + (i.displacedPopulation ?? 0), 0);
+//   const criticalZoneIds  = Object.values(impacts).filter(i => i.riskLevel === 'critical' || i.riskLevel === 'high').map(i => i.zoneId);
+//   const blockedRoadNames = Object.values(impacts).filter(i => (i.roadBlockedPct ?? 0) > 0.5)
+//     .flatMap(i => zoneMap[i.zoneId]?.roadNames ?? []).filter((v, i, a) => a.indexOf(v) === i).slice(0, 10);
+//   const overwhelmedHospitalIds: string[] = [];
+//   for (const z of city.zones)
+//     for (const h of z.hospitals)
+//       if ((h.currentLoad ?? 0.6) + (impacts[z.id]?.hospitalCapacityLoss ?? 0) > 0.95)
+//         overwhelmedHospitalIds.push(h.id);
+//
+//   return { disasterType, epicenterZoneId, intensity: initialIntensity,
+//     impacts, totalAffectedPop, criticalZoneIds, blockedRoadNames, overwhelmedHospitalIds, timestamp: Date.now() };
+// }
+
+
+
+
+// ============================================================
+// FILE: lib/ai.ts
+// PURPOSE: AI plan generation — Gemini, OpenRouter, or Ollama.
+//          Ollama is called client-side (browser → localhost:11434).
+//          Gemini + OpenRouter are called server-side via API route.
+// ============================================================
+
+// import { CascadeResult, CityConfig, AIResponsePlan, DisasterType } from '@/data/types';
+//
+// function disasterContext(type: DisasterType): string {
+//   const ctx: Record<DisasterType, string> = {
+//     FLOOD:      'monsoon flooding with rising water levels, road submersion, and water contamination',
+//     FIRE:       'active urban fire spreading through buildings, causing structural damage and smoke hazard',
+//     EARTHQUAKE: 'seismic event with ground shaking, structural collapse risk, and utility disruption',
+//     DISEASE:    'infectious disease outbreak spreading through contaminated water and dense population',
+//     HEATWAVE:   'extreme heat event causing heatstroke, dehydration, and infrastructure stress',
+//   };
+//   return ctx[type];
+// }
+//
+// export function buildAIPrompt(city: CityConfig, result: CascadeResult): string {
+//   const { impacts, disasterType, criticalZoneIds, blockedRoadNames, overwhelmedHospitalIds } = result;
+//   const allHospitals = city.zones.flatMap(z => z.hospitals);
+//   const overwhelmedNames = overwhelmedHospitalIds
+//     .map(id => allHospitals.find(h => h.id === id)?.name ?? id).join(', ');
+//   const zoneLines = Object.values(impacts).sort((a, b) => b.intensity - a.intensity).slice(0, 8)
+//     .map(imp => {
+//       const zone = city.zones.find(z => z.id === imp.zoneId);
+//       const parts = [`Zone: ${zone?.name ?? imp.zoneId}`, `Risk: ${imp.riskLevel.toUpperCase()}`];
+//       if (imp.floodDepth        !== undefined) parts.push(`Flood depth: ${imp.floodDepth.toFixed(1)}m`);
+//       if (imp.fireSpreadPct     !== undefined) parts.push(`Fire: ${(imp.fireSpreadPct * 100).toFixed(0)}%`);
+//       if (imp.groundShakingMMI  !== undefined) parts.push(`MMI: ${imp.groundShakingMMI.toFixed(1)}`);
+//       if (imp.diseaseRisk       !== undefined) parts.push(`Disease: ${(imp.diseaseRisk * 100).toFixed(0)}%`);
+//       if (imp.heatStressIndex   !== undefined) parts.push(`Heat: ${imp.heatStressIndex.toFixed(0)}°C`);
+//       parts.push(`Roads blocked: ${(imp.roadBlockedPct * 100).toFixed(0)}%`);
+//       parts.push(`Hospital loss: ${(imp.hospitalCapacityLoss * 100).toFixed(0)}%`);
+//       if (imp.displacedPopulation) parts.push(`Displaced: ${imp.displacedPopulation.toLocaleString()}`);
+//       return '  - ' + parts.join(', ');
+//     }).join('\n');
+//
+//   return `You are an emergency management AI for ${city.name}, ${city.country}.
+// CRISIS: ${disasterContext(disasterType)}
+// CRITICAL ZONES: ${criticalZoneIds.map(id => city.zones.find(z => z.id === id)?.name ?? id).join(', ')}
+// BLOCKED ROADS: ${blockedRoadNames.join(', ') || 'None yet'}
+// OVERWHELMED HOSPITALS: ${overwhelmedNames || 'None yet'}
+// TOTAL DISPLACED: ${result.totalAffectedPop.toLocaleString()}
+// ZONE STATUS:
+// ${zoneLines}
+// Respond ONLY with valid JSON (no markdown):
+// {"summary":"...","emergencyRouting":["..."],"hospitalAllocation":["..."],"publicHealth":["..."],"infrastructure":["..."],"evacuation":["..."],"contacts":["Emergency: 999","Fire: 16003","Ambulance: 199"]}
+// Use actual zone names. Each array: 3-5 specific actionable items.`;
+// }
+//
+// export function parseAIResponse(raw: string): AIResponsePlan {
+//   try { return JSON.parse(raw.replace(/```json|```/g, '').trim()); }
+//   catch { return FALLBACK_PLAN; }
+// }
+//
+// export const FALLBACK_PLAN: AIResponsePlan = {
+//   summary: 'AI response unavailable. Manual coordination required.',
+//   emergencyRouting:    ['Route ambulances via main arterial roads avoiding affected zones'],
+//   hospitalAllocation:  ['Critical patients → nearest hospital with available capacity'],
+//   publicHealth:        ['Boil all water before use','Avoid flooded areas'],
+//   infrastructure:      ['Priority repair: main access roads to hospitals'],
+//   evacuation:          ['Evacuate low-lying zones to higher ground'],
+//   contacts:            ['Emergency: 999','Ambulance: 199','Fire: 16003'],
+// };
+//
+// export async function callGemini(prompt: string, apiKey: string): Promise<AIResponsePlan> {
+//   const res = await fetch(
+//     `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+//     { method:'POST', headers:{'Content-Type':'application/json'},
+//       body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.3,maxOutputTokens:1000} }) }
+//   );
+//   if (!res.ok) return FALLBACK_PLAN;
+//   const data = await res.json();
+//   return parseAIResponse(data.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
+// }
+//
+// export async function callOpenRouter(prompt: string, apiKey: string, model = 'google/gemma-3-4b-it:free'): Promise<AIResponsePlan> {
+//   const res = await fetch('https://openrouter.ai/api/v1/chat/completions',
+//     { method:'POST', headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},
+//       body: JSON.stringify({model, messages:[{role:'user',content:prompt}], max_tokens:1000, temperature:0.3}) }
+//   );
+//   if (!res.ok) return FALLBACK_PLAN;
+//   const data = await res.json();
+//   return parseAIResponse(data.choices?.[0]?.message?.content ?? '');
+// }
+//
+// // IMPORTANT: call this from the browser only (localhost:11434 not reachable from Next.js server)
+// export async function callOllama(prompt: string, model = 'gemma2'): Promise<AIResponsePlan> {
+//   const res = await fetch('http://localhost:11434/api/generate',
+//     { method:'POST', headers:{'Content-Type':'application/json'},
+//       body: JSON.stringify({model, prompt, stream:false}) }
+//   );
+//   if (!res.ok) return FALLBACK_PLAN;
+//   return parseAIResponse((await res.json()).response ?? '');
+// }
+
+
+
+
+// ============================================================
+// FILE: lib/mongodb.ts
+// PURPOSE: Singleton MongoDB client. App works fine without DB —
+//          save failures are silent. Set MONGODB_URI in .env.local.
+// ============================================================
+
+// import { MongoClient } from 'mongodb';
+// const uri = process.env.MONGODB_URI ?? '';
+// let clientPromise: Promise<MongoClient>;
+// if (!uri) {
+//   clientPromise = new Promise(() => {}); // never resolves, saves fail silently
+// } else if (process.env.NODE_ENV === 'development') {
+//   const g = global as typeof globalThis & { _mongo?: Promise<MongoClient> };
+//   if (!g._mongo) { const c = new MongoClient(uri); g._mongo = c.connect(); }
+//   clientPromise = g._mongo;
+// } else {
+//   clientPromise = new MongoClient(uri).connect();
+// }
+// export default clientPromise;
+
+
+
+
+// ============================================================
+// FILE: app/api/cascade/route.ts
+// ============================================================
+
+// import { NextRequest, NextResponse } from 'next/server';
+// import { runCascade } from '@/lib/cascade';
+// import { getCity } from '@/data/cityRegistry';
+// export async function POST(req: NextRequest) {
+//   const { cityId, zoneId, disasterType, intensity } = await req.json();
+//   return NextResponse.json(runCascade(getCity(cityId ?? 'dhaka'), zoneId, disasterType, intensity));
+// }
+
+
+
+
+// ============================================================
+// FILE: app/api/ai-response/route.ts
+// ============================================================
+
+// import { NextRequest, NextResponse } from 'next/server';
+// import { buildAIPrompt, callGemini, callOpenRouter, FALLBACK_PLAN } from '@/lib/ai';
+// import { getCity } from '@/data/cityRegistry';
+// export async function POST(req: NextRequest) {
+//   const { cascade, cityId, provider = 'gemini', model, userKey } = await req.json();
+//   const prompt = buildAIPrompt(getCity(cityId ?? 'dhaka'), cascade);
+//   try {
+//     const key = userKey || process.env.GEMINI_API_KEY || '';
+//     if (provider === 'openrouter') return NextResponse.json(await callOpenRouter(prompt, key, model));
+//     if (!key) return NextResponse.json(FALLBACK_PLAN);
+//     return NextResponse.json(await callGemini(prompt, key));
+//   } catch { return NextResponse.json(FALLBACK_PLAN); }
+// }
+
+
+
+
+// ============================================================
+// FILE: app/api/save-simulation/route.ts
+// ============================================================
+
+// import { NextRequest, NextResponse } from 'next/server';
+// import clientPromise from '@/lib/mongodb';
+// export async function POST(req: NextRequest) {
+//   try {
+//     const db = (await clientPromise).db('citycascade');
+//     await db.collection('simulations').insertOne({ ...await req.json(), createdAt: new Date() });
+//     return NextResponse.json({ ok: true });
+//   } catch { return NextResponse.json({ ok: false }); }
+// }
+// export async function GET() {
+//   try {
+//     const db = (await clientPromise).db('citycascade');
+//     const docs = await db.collection('simulations').find({}).sort({ createdAt: -1 }).limit(10).toArray();
+//     return NextResponse.json(docs);
+//   } catch { return NextResponse.json([]); }
+// }
+
+
+
+
+// ============================================================
+// FILE: app/layout.tsx
+// ============================================================
+
+// import type { Metadata } from 'next';
+// import { GeistMono } from 'geist/font/mono';
+// import './globals.css';
+// export const metadata: Metadata = {
+//   title: 'CityCascade AI — Disaster Simulation',
+//   description: 'Interactive cascading disaster simulator with AI emergency response',
+// };
+// export default function RootLayout({ children }: { children: React.ReactNode }) {
+//   return (
+//     <html lang="en" className={GeistMono.variable}>
+//       <body>{children}</body>
+//     </html>
+//   );
+// }
+
+
+
+
+// ============================================================
+// FILE: app/globals.css
+// ============================================================
+
+/*
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@import "leaflet/dist/leaflet.css";
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #07111d; --bg2: #0c1a29; --bg3: #112233;
+  --border: #1e3a55; --text: #c8dcea; --text2: #7a9ab8;
+  --accent: #ff6b2b; --green: #00ff88;
+  --mono: 'GeistMono', 'Courier New', monospace;
+}
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--mono); }
+
+.app-layout { display: flex; height: 100vh; width: 100vw; overflow: hidden; }
+.map-area   { flex: 1; position: relative; min-width: 0; }
+.panel-area { width: 360px; flex-shrink: 0; height: 100vh; overflow: hidden;
+  border-left: 1px solid var(--border); background: var(--bg); }
+
+.leaflet-container { background: #0a1520 !important; }
+.leaflet-dark-tooltip {
+  background: rgba(7,17,29,0.95) !important; border: 1px solid var(--border) !important;
+  color: var(--text) !important; font-family: var(--mono) !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.8) !important; border-radius: 6px !important; padding: 8px 10px !important;
+}
+.leaflet-control-zoom a { background: var(--bg2) !important; color: var(--text) !important; border-color: var(--border) !important; }
+.leaflet-bar { border: 1px solid var(--border) !important; }
+
+.disaster-badge {
+  position: absolute; top: 16px; left: 16px; z-index: 1000;
+  background: rgba(7,17,29,0.92); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 14px; font-size: 13px; font-weight: 700; letter-spacing: 0.05em;
+  display: flex; align-items: center; gap: 10px; backdrop-filter: blur(8px); text-transform: uppercase;
+}
+.reset-btn {
+  background: rgba(255,50,50,0.15); border: 1px solid rgba(255,50,50,0.4);
+  color: #ff6666; border-radius: 5px; padding: 2px 10px; font-size: 11px;
+  cursor: pointer; font-family: var(--mono);
+}
+
+.side-panel { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.panel-header { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); background: var(--bg2); flex-shrink: 0; }
+.header-top { display: flex; align-items: center; gap: 10px; }
+.city-flag { font-size: 26px; }
+.city-name { font-size: 15px; font-weight: 700; color: #fff; letter-spacing: 0.04em; }
+.city-sub  { font-size: 10px; color: var(--text2); }
+.status-pill { margin-left: auto; font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 20px; letter-spacing: 0.08em; }
+.status-active { background: rgba(255,0,46,0.2); border: 1px solid #ff002e; color: #ff6680; }
+.status-idle   { background: rgba(0,255,136,0.1); border: 1px solid #00ff88; color: #00ff88; }
+
+.disaster-bar { display: flex; gap: 4px; padding: 10px 12px 6px; flex-shrink: 0; }
+.disaster-btn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+  cursor: pointer; color: var(--text2); font-family: var(--mono); transition: all 0.15s;
+}
+.disaster-btn:hover { border-color: #4a7aaa; color: var(--text); }
+.disaster-btn-active { background: rgba(255,107,43,0.1); }
+.dis-emoji { font-size: 18px; line-height: 1; }
+.dis-label { font-size: 9px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+
+.intensity-row { display: flex; align-items: center; gap: 10px; padding: 6px 14px 8px; flex-shrink: 0; }
+.int-label { font-size: 10px; color: var(--text2); white-space: nowrap; }
+.int-value { font-size: 12px; font-weight: 700; min-width: 34px; text-align: right; }
+.intensity-slider { flex: 1; accent-color: var(--accent); height: 4px; cursor: pointer; }
+
+.hint-box {
+  margin: 4px 12px 6px; padding: 10px 12px;
+  background: rgba(0,119,255,0.08); border: 1px solid rgba(0,119,255,0.25);
+  border-radius: 7px; font-size: 11px; color: var(--text2); line-height: 1.5; flex-shrink: 0;
+}
+
+.stats-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 1px; background: var(--border);
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.stat-box { background: var(--bg2); padding: 8px 6px; text-align: center; }
+.stat-value { font-size: 18px; font-weight: 700; line-height: 1; }
+.stat-label { font-size: 9px; color: var(--text2); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+.stat-sub   { font-size: 9px; color: var(--text2); }
+
+.tab-bar { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.tab-btn {
+  flex: 1; padding: 9px 4px; font-size: 10px; font-weight: 600; font-family: var(--mono);
+  cursor: pointer; background: var(--bg); border: none; color: var(--text2);
+  border-bottom: 2px solid transparent; text-transform: uppercase; letter-spacing: 0.04em; transition: all 0.15s;
+}
+.tab-btn:hover { color: var(--text); background: var(--bg2); }
+.tab-active { color: var(--accent) !important; border-bottom-color: var(--accent) !important; background: var(--bg2) !important; }
+
+.tab-content { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.tab-content::-webkit-scrollbar { width: 4px; }
+.tab-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.zones-list { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.toggle-row { display: flex; gap: 6px; margin-bottom: 4px; }
+.toggle-btn {
+  flex: 1; padding: 5px 8px; font-size: 10px; font-family: var(--mono);
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text2);
+  border-radius: 5px; cursor: pointer; font-weight: 600; letter-spacing: 0.03em;
+}
+.toggle-on { border-color: var(--green) !important; color: var(--green) !important; background: rgba(0,255,136,0.08) !important; }
+.empty-state { text-align: center; color: var(--text2); font-size: 12px; padding: 24px 12px; line-height: 1.7; }
+
+.zone-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 7px;
+  padding: 8px 10px; cursor: pointer; transition: border-color 0.15s;
+}
+.zone-card:hover { border-color: #3a6aaa; }
+.zone-card-selected { border-color: #fff !important; }
+.zone-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+.zone-name { font-size: 12px; font-weight: 700; color: #fff; }
+.risk-badge { font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 4px; letter-spacing: 0.06em; }
+.int-bar-bg { height: 3px; background: var(--bg3); border-radius: 2px; margin-bottom: 5px; overflow: hidden; }
+.int-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.zone-stats { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: var(--text2); }
+.route-line { font-size: 10px; color: var(--green); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.blocked-roads {
+  margin-top: 8px; background: rgba(255,0,0,0.06);
+  border: 1px solid rgba(255,0,0,0.2); border-radius: 7px; padding: 8px 10px;
+}
+.section-title { font-size: 10px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+.road-item { font-size: 11px; color: #ff6666; padding: 2px 0; }
+
+.contacts-list { padding: 8px; display: flex; flex-direction: column; gap: 10px; }
+.contact-section { display: flex; flex-direction: column; gap: 5px; }
+.national-emergency-btn {
+  display: block; text-align: center; padding: 12px;
+  background: rgba(255,0,46,0.15); border: 1px solid rgba(255,0,46,0.5);
+  border-radius: 8px; color: #ff6680; font-weight: 700; font-size: 14px;
+  text-decoration: none; font-family: var(--mono); letter-spacing: 0.05em;
+}
+.contact-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; display: flex; flex-direction: column; gap: 3px; }
+.contact-card-warn { border-color: #ff8800 !important; background: rgba(255,136,0,0.06) !important; }
+.contact-name { font-size: 11px; font-weight: 700; color: #ddeeff; }
+.contact-addr { font-size: 10px; color: var(--text2); }
+.contact-coverage { font-size: 10px; color: #6a9aaa; font-style: italic; }
+.phone-btn {
+  display: inline-block; margin-top: 3px; padding: 4px 10px;
+  background: rgba(0,255,136,0.1); border: 1px solid rgba(0,255,136,0.3);
+  border-radius: 5px; color: var(--green); font-size: 11px; font-weight: 700;
+  text-decoration: none; font-family: var(--mono); align-self: flex-start;
+}
+
+.ai-tab { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+.ai-generate-btn {
+  width: 100%; padding: 14px; background: rgba(255,107,43,0.15);
+  border: 1px solid rgba(255,107,43,0.5); border-radius: 8px;
+  color: var(--accent); font-size: 13px; font-weight: 700;
+  font-family: var(--mono); cursor: pointer; letter-spacing: 0.04em;
+}
+.ai-generate-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ai-loading { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text2); padding: 8px; }
+.ai-spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ai-plan { display: flex; flex-direction: column; gap: 10px; }
+.ai-summary { padding: 10px 12px; background: rgba(0,119,255,0.08); border-left: 3px solid #0077ff; border-radius: 0 6px 6px 0; font-size: 11px; line-height: 1.6; }
+.ai-section { background: var(--bg2); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; }
+.ai-section-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); margin-bottom: 6px; }
+.ai-list { display: flex; flex-direction: column; gap: 4px; padding-left: 0; list-style: none; }
+.ai-list li { font-size: 11px; color: var(--text2); line-height: 1.5; padding-left: 12px; position: relative; }
+.ai-list li::before { content: '›'; position: absolute; left: 0; color: var(--accent); }
+.ai-regen-btn { padding: 8px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; color: var(--text2); font-size: 11px; font-family: var(--mono); cursor: pointer; }
+
+.text-red-400 { color: #f87171; }
+.bg-red-900   { background: #450a0a; } .text-red-200 { color: #fecaca; } .border-red-500 { border-color: #ef4444; }
+.bg-orange-900 { background: #431407; } .text-orange-200 { color: #fed7aa; } .border-orange-500 { border-color: #f97316; }
+.bg-yellow-900 { background: #422006; } .text-yellow-200 { color: #fef08a; } .border-yellow-500 { border-color: #eab308; }
+.bg-green-900  { background: #052e16; } .text-green-200 { color: #bbf7d0; } .border-green-500 { border-color: #22c55e; }
+.bg-slate-800  { background: #1e293b; } .text-slate-400 { color: #94a3b8; } .border-slate-600 { border-color: #475569; }
+*/
+
+
+
+
+// ============================================================
+// FILE: app/page.tsx
+// ============================================================
+
+// 'use client';
+// import { useState, useCallback } from 'react';
+// import dynamic from 'next/dynamic';
+// import SidePanel from '@/components/Panel/SidePanel';
+// import { CascadeResult, DisasterType, AIResponsePlan } from '@/data/types';
+// import { getCity } from '@/data/cityRegistry';
+//
+// const CityMap = dynamic(() => import('@/components/Map/CityMap'), { ssr: false });
+// const city = getCity('dhaka');
+//
+// export default function Home() {
+//   const [disasterType,   setDisasterType]   = useState<DisasterType>('FLOOD');
+//   const [intensity,      setIntensity]       = useState(0.7);
+//   const [selectedZoneId, setSelectedZoneId]  = useState<string | null>(null);
+//   const [cascade,        setCascade]         = useState<CascadeResult | null>(null);
+//   const [aiPlan,         setAiPlan]          = useState<AIResponsePlan | null>(null);
+//   const [aiLoading,      setAiLoading]       = useState(false);
+//   const [showRoutes,     setShowRoutes]      = useState(true);
+//   const [showMarkers,    setShowMarkers]     = useState(true);
+//
+//   const triggerCascade = useCallback(async (zoneId: string) => {
+//     setSelectedZoneId(zoneId);
+//     setAiPlan(null);
+//     const res = await fetch('/api/cascade', {
+//       method: 'POST', headers: { 'Content-Type': 'application/json' },
+//       body: JSON.stringify({ cityId: city.id, zoneId, disasterType, intensity }),
+//     });
+//     if (!res.ok) return;
+//     const result: CascadeResult = await res.json();
+//     setCascade(result);
+//     fetch('/api/save-simulation', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(result) }).catch(() => {});
+//   }, [disasterType, intensity]);
+//
+//   const handleDisasterChange = (type: DisasterType) => {
+//     setDisasterType(type); setAiPlan(null);
+//     if (selectedZoneId) setTimeout(() => triggerCascade(selectedZoneId), 50);
+//   };
+//   const handleIntensityChange = (v: number) => {
+//     setIntensity(v); setAiPlan(null);
+//     if (selectedZoneId) setTimeout(() => triggerCascade(selectedZoneId), 50);
+//   };
+//
+//   const generateAI = useCallback(async () => {
+//     if (!cascade) return;
+//     setAiLoading(true); setAiPlan(null);
+//     try {
+//       const res = await fetch('/api/ai-response', {
+//         method:'POST', headers:{'Content-Type':'application/json'},
+//         body: JSON.stringify({ cascade, cityId: city.id }),
+//       });
+//       setAiPlan(await res.json());
+//     } catch { setAiPlan(null); }
+//     finally { setAiLoading(false); }
+//   }, [cascade]);
+//
+//   const EMOJIS: Record<DisasterType, string> = { FLOOD:'🌊', FIRE:'🔥', EARTHQUAKE:'🏚️', DISEASE:'🦠', HEATWAVE:'☀️' };
+//
+//   return (
+//     <div className="app-layout">
+//       <main className="map-area">
+//         <CityMap city={city} cascade={cascade} selectedZoneId={selectedZoneId}
+//           onZoneClick={triggerCascade} showRoutes={showRoutes} showEmergencyMarkers={showMarkers} />
+//         {cascade && (
+//           <div className="disaster-badge">
+//             <span>{EMOJIS[cascade.disasterType]}</span>
+//             {cascade.disasterType} — {city.zones.find(z => z.id === cascade.epicenterZoneId)?.name}
+//             <button className="reset-btn"
+//               onClick={() => { setCascade(null); setSelectedZoneId(null); setAiPlan(null); }}>
+//               ✕ Reset
+//             </button>
+//           </div>
+//         )}
+//       </main>
+//       <aside className="panel-area">
+//         <SidePanel city={city} cascade={cascade} selectedZoneId={selectedZoneId}
+//           onZoneSelect={triggerCascade} onDisasterChange={handleDisasterChange}
+//           onIntensityChange={handleIntensityChange} onGenerateAI={generateAI}
+//           aiPlan={aiPlan} aiLoading={aiLoading} intensity={intensity} disasterType={disasterType}
+//           showRoutes={showRoutes} onToggleRoutes={() => setShowRoutes(p => !p)}
+//           showMarkers={showMarkers} onToggleMarkers={() => setShowMarkers(p => !p)} />
+//       </aside>
+//     </div>
+//   );
+// }
+
+
+
+
+// ============================================================
+// FILE: components/Map/CityMap.tsx
+// PURPOSE: Leaflet map — zone polygons, disaster overlays,
+//          hospital routing lines, emergency markers.
+//          Must be loaded with dynamic import ssr:false (Leaflet needs browser DOM).
+// ============================================================
+
+// 'use client';
+// import { useEffect, useRef } from 'react';
+// import L from 'leaflet';
+// import 'leaflet/dist/leaflet.css';
+// import { CityConfig, CascadeResult, RiskLevel, DisasterType } from '@/data/types';
+//
+// interface Props {
+//   city: CityConfig; cascade: CascadeResult | null; selectedZoneId: string | null;
+//   onZoneClick: (zoneId: string) => void; showRoutes: boolean; showEmergencyMarkers: boolean;
+// }
+//
+// const RISK_COLORS: Record<RiskLevel, { fill: string; stroke: string; opacity: number }> = {
+//   safe:     { fill: '#00d4aa', stroke: '#00ffcc', opacity: 0.15 },
+//   low:      { fill: '#ffd600', stroke: '#ffe033', opacity: 0.30 },
+//   moderate: { fill: '#ff8c00', stroke: '#ffa733', opacity: 0.45 },
+//   high:     { fill: '#ff3d00', stroke: '#ff6030', opacity: 0.60 },
+//   critical: { fill: '#ff002e', stroke: '#ff4d6d', opacity: 0.75 },
+// };
+//
+// function disasterFillColor(type: DisasterType, intensity: number): string {
+//   const base: Record<DisasterType, string[]> = {
+//     FLOOD:      ['#001a4d','#0044cc','#0077ff','#33aaff'],
+//     FIRE:       ['#4d1100','#cc3300','#ff6600','#ffaa33'],
+//     EARTHQUAKE: ['#1a0033','#5500aa','#8833ff','#cc88ff'],
+//     DISEASE:    ['#003322','#006644','#00aa66','#44ffaa'],
+//     HEATWAVE:   ['#4d2200','#aa5500','#ff9900','#ffdd33'],
+//   };
+//   return base[type][Math.min(3, Math.floor(intensity * 4))];
+// }
+//
+// function makeIcon(emoji: string, size = 28): L.DivIcon {
+//   return L.divIcon({
+//     className: '',
+//     html: `<div style="font-size:${size}px;line-height:1;filter:drop-shadow(0 0 6px rgba(0,0,0,0.9));cursor:pointer">${emoji}</div>`,
+//     iconAnchor: [size / 2, size / 2],
+//   });
+// }
+//
+// export default function CityMap({ city, cascade, selectedZoneId, onZoneClick, showRoutes, showEmergencyMarkers }: Props) {
+//   const mapRef       = useRef<L.Map | null>(null);
+//   const containerRef = useRef<HTMLDivElement>(null);
+//   const layersRef    = useRef<L.Layer[]>([]);
+//
+//   useEffect(() => {
+//     if (!containerRef.current || mapRef.current) return;
+//     const map = L.map(containerRef.current, { center: city.center, zoom: city.zoom, zoomControl: false, attributionControl: false });
+//     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 19 }).addTo(map);
+//     L.control.attribution({ prefix: false, position: 'bottomright' }).addAttribution('© CARTO').addTo(map);
+//     L.control.zoom({ position: 'bottomright' }).addTo(map);
+//     mapRef.current = map;
+//     return () => { map.remove(); mapRef.current = null; };
+//   }, []); // eslint-disable-line
+//
+//   useEffect(() => {
+//     const map = mapRef.current; if (!map) return;
+//     layersRef.current.forEach(l => map.removeLayer(l));
+//     layersRef.current = [];
+//     const add = (l: L.Layer) => { l.addTo(map); layersRef.current.push(l); };
+//
+//     // Zone polygons
+//     for (const zone of city.zones) {
+//       const impact = cascade?.impacts[zone.id];
+//       const isSelected = zone.id === selectedZoneId;
+//       let fillColor = '#1a2a3a', fillOpacity = 0.4, strokeColor = '#2a4060', strokeWidth = 1;
+//       if (impact) {
+//         const c = RISK_COLORS[impact.riskLevel];
+//         fillColor = cascade ? disasterFillColor(cascade.disasterType, impact.intensity) : c.fill;
+//         fillOpacity = c.opacity; strokeColor = c.stroke; strokeWidth = impact.riskLevel === 'critical' ? 3 : 2;
+//       }
+//       if (isSelected) { strokeColor = '#ffffff'; strokeWidth = 3; fillOpacity = Math.min(0.85, fillOpacity + 0.2); }
+//
+//       const poly = L.polygon(zone.polygon as L.LatLngTuple[], {
+//         fillColor, fillOpacity, color: strokeColor, weight: strokeWidth,
+//         dashArray: impact?.roadBlockedPct && impact.roadBlockedPct > 0.5 ? '6 4' : undefined,
+//       });
+//       poly.bindTooltip(`
+//         <div style="font-family:monospace;font-size:12px;min-width:160px">
+//           <b style="font-size:14px">${zone.name}</b><br/>
+//           👥 ${zone.population.toLocaleString()}
+//           ${impact ? `<br/>⚠️ <b style="color:${RISK_COLORS[impact.riskLevel].stroke}">${impact.riskLevel.toUpperCase()}</b>` : ''}
+//           ${impact?.floodDepth !== undefined ? `<br/>💧 ${impact.floodDepth.toFixed(1)}m` : ''}
+//           ${impact?.fireSpreadPct !== undefined ? `<br/>🔥 ${(impact.fireSpreadPct*100).toFixed(0)}%` : ''}
+//           ${impact?.groundShakingMMI !== undefined ? `<br/>🏚️ MMI ${impact.groundShakingMMI.toFixed(1)}` : ''}
+//           ${impact?.diseaseRisk !== undefined ? `<br/>🦠 ${(impact.diseaseRisk*100).toFixed(0)}%` : ''}
+//           ${impact?.heatStressIndex !== undefined ? `<br/>🌡️ ${impact.heatStressIndex.toFixed(0)}°C` : ''}
+//           ${impact?.displacedPopulation ? `<br/>🏃 ${impact.displacedPopulation.toLocaleString()} displaced` : ''}
+//           <br/><span style="color:#888;font-size:10px">Click to simulate</span>
+//         </div>
+//       `, { sticky: true, className: 'leaflet-dark-tooltip' });
+//       poly.on('click', () => onZoneClick(zone.id));
+//       add(poly);
+//       // Zone label
+//       add(L.marker(zone.center as L.LatLngTuple, { icon: L.divIcon({
+//         className: '',
+//         html: `<div style="color:${impact?'#fff':'#8899aa'};font-size:10px;font-family:monospace;font-weight:600;text-shadow:0 1px 4px #000;white-space:nowrap;text-align:center;pointer-events:none">${zone.name}</div>`,
+//         iconAnchor: [40,8], iconSize: [80,16],
+//       }) }));
+//     }
+//
+//     // Hospital routing lines
+//     if (showRoutes && cascade) {
+//       const drawn = new Set<string>();
+//       for (const imp of Object.values(cascade.impacts)) {
+//         if (imp.hospitalRoute && imp.nearestHospitalId && imp.riskLevel !== 'safe') {
+//           const key = `${imp.zoneId}-${imp.nearestHospitalId}`;
+//           if (!drawn.has(key)) {
+//             drawn.add(key);
+//             const line = L.polyline(imp.hospitalRoute as L.LatLngTuple[], { color:'#00ff88', weight:2, opacity:0.7, dashArray:'8 5' });
+//             line.bindTooltip('🚑 Nearest open hospital route', { sticky: true });
+//             add(line);
+//           }
+//         }
+//       }
+//     }
+//
+//     // Emergency markers
+//     if (showEmergencyMarkers) {
+//       for (const zone of city.zones)
+//         for (const h of zone.hospitals) {
+//           const isOver = cascade?.overwhelmedHospitalIds.includes(h.id);
+//           const m = L.marker(h.position as L.LatLngTuple, { icon: makeIcon('🏥', 24) });
+//           m.bindTooltip(`<div style="font-family:monospace;font-size:11px"><b>🏥 ${h.name}</b><br/>Beds: ${h.capacity}<br/>Load: ${((h.currentLoad??0.6)*100).toFixed(0)}%${isOver?'<br/><b style="color:#ff4444">⚠️ OVERWHELMED</b>':''}<br/>📞 ${h.phone}</div>`);
+//           add(m);
+//         }
+//       for (const s of city.emergencyContacts.police)
+//         if (s.position) { const m = L.marker(s.position as L.LatLngTuple, { icon: makeIcon('🚔',22) }); m.bindTooltip(`<div style="font-family:monospace;font-size:11px"><b>🚔 ${s.name}</b><br/>📞 ${s.phone}</div>`); add(m); }
+//       for (const s of city.emergencyContacts.fire)
+//         if (s.position) { const m = L.marker(s.position as L.LatLngTuple, { icon: makeIcon('🚒',22) }); m.bindTooltip(`<div style="font-family:monospace;font-size:11px"><b>🚒 ${s.name}</b><br/>📞 ${s.phone}</div>`); add(m); }
+//     }
+//
+//     // Epicenter dot
+//     if (cascade?.epicenterZoneId) {
+//       const epi = city.zones.find(z => z.id === cascade.epicenterZoneId);
+//       if (epi) {
+//         const p = L.circleMarker(epi.center as L.LatLngTuple, { radius:12, fillColor:'#ff002e', fillOpacity:0.9, color:'#fff', weight:2 });
+//         p.bindTooltip(`<b>⚡ Epicenter: ${epi.name}</b>`);
+//         add(p);
+//       }
+//     }
+//   }, [city, cascade, selectedZoneId, showRoutes, showEmergencyMarkers, onZoneClick]);
+//
+//   return <div ref={containerRef} style={{ width:'100%', height:'100%' }} />;
+// }
+
+
+
+
+// ============================================================
+// FILE: components/Panel/SidePanel.tsx
+// ============================================================
+
+// 'use client';
+// import { useState } from 'react';
+// import { CityConfig, CascadeResult, DisasterType, AIResponsePlan } from '@/data/types';
+//
+// interface Props {
+//   city: CityConfig; cascade: CascadeResult | null; selectedZoneId: string | null;
+//   onZoneSelect: (id: string) => void; onDisasterChange: (t: DisasterType) => void;
+//   onIntensityChange: (v: number) => void; onGenerateAI: () => void;
+//   aiPlan: AIResponsePlan | null; aiLoading: boolean;
+//   intensity: number; disasterType: DisasterType;
+//   showRoutes: boolean; onToggleRoutes: () => void;
+//   showMarkers: boolean; onToggleMarkers: () => void;
+// }
+//
+// const DISASTERS = [
+//   { type: 'FLOOD'      as DisasterType, emoji: '🌊', label: 'Flood',     color: '#0077ff' },
+//   { type: 'FIRE'       as DisasterType, emoji: '🔥', label: 'Fire',      color: '#ff6600' },
+//   { type: 'EARTHQUAKE' as DisasterType, emoji: '🏚️', label: 'Quake',    color: '#9933ff' },
+//   { type: 'DISEASE'    as DisasterType, emoji: '🦠', label: 'Disease',   color: '#00cc66' },
+//   { type: 'HEATWAVE'   as DisasterType, emoji: '☀️', label: 'Heatwave', color: '#ff9900' },
+// ];
+//
+// const RISK_BADGE: Record<string, string> = {
+//   critical: 'bg-red-900 text-red-200 border border-red-500',
+//   high:     'bg-orange-900 text-orange-200 border border-orange-500',
+//   moderate: 'bg-yellow-900 text-yellow-200 border border-yellow-500',
+//   low:      'bg-green-900 text-green-200 border border-green-500',
+//   safe:     'bg-slate-800 text-slate-400 border border-slate-600',
+// };
+//
+// export default function SidePanel({ city, cascade, selectedZoneId, onZoneSelect,
+//   onDisasterChange, onIntensityChange, onGenerateAI, aiPlan, aiLoading,
+//   intensity, disasterType, showRoutes, onToggleRoutes, showMarkers, onToggleMarkers }: Props) {
+//
+//   const [tab, setTab] = useState<'sim' | 'contacts' | 'ai'>('sim');
+//   const impacts = cascade ? Object.values(cascade.impacts) : [];
+//   const allHospitals = city.zones.flatMap(z => z.hospitals);
+//   const d = DISASTERS.find(x => x.type === disasterType)!;
+//
+//   return (
+//     <div className="side-panel">
+//       {/* Header */}
+//       <div className="panel-header">
+//         <div className="header-top">
+//           <span className="city-flag">{city.flag}</span>
+//           <div><div className="city-name">{city.name} EOC</div><div className="city-sub">{city.country} · Emergency Operations</div></div>
+//           <div className={`status-pill ${cascade ? 'status-active' : 'status-idle'}`}>{cascade ? '⚡ ACTIVE' : '● STANDBY'}</div>
+//         </div>
+//       </div>
+//
+//       {/* Disaster selector */}
+//       <div className="disaster-bar">
+//         {DISASTERS.map(dis => (
+//           <button key={dis.type} onClick={() => onDisasterChange(dis.type)} title={dis.label}
+//             className={`disaster-btn ${disasterType === dis.type ? 'disaster-btn-active' : ''}`}
+//             style={disasterType === dis.type ? { borderColor: dis.color, color: dis.color } : {}}>
+//             <span className="dis-emoji">{dis.emoji}</span>
+//             <span className="dis-label">{dis.label}</span>
+//           </button>
+//         ))}
+//       </div>
+//
+//       {/* Intensity */}
+//       <div className="intensity-row">
+//         <span className="int-label">Intensity</span>
+//         <input type="range" min={1} max={10} value={Math.round(intensity * 10)}
+//           onChange={e => onIntensityChange(Number(e.target.value) / 10)} className="intensity-slider" />
+//         <span className="int-value" style={{ color: d.color }}>{Math.round(intensity * 10)}/10</span>
+//       </div>
+//
+//       {!cascade && <div className="hint-box">👆 Click any zone to simulate a <b style={{ color: d.color }}>{d.emoji} {d.label}</b></div>}
+//
+//       {/* Stats */}
+//       {cascade && (
+//         <div className="stats-grid">
+//           {[
+//             { label:'Zones Hit',   value: String(impacts.length),                                                                   color: d.color   },
+//             { label:'Critical',    value: String(impacts.filter(i => i.riskLevel==='critical').length),                              color: '#ff002e' },
+//             { label:'Displaced',   value: (() => { const t=impacts.reduce((s,i)=>s+(i.displacedPopulation??0),0); return t>999?`${(t/1000).toFixed(0)}K`:String(t); })(), color: '#ff8c00' },
+//             { label:'Hospitals ⚠️',value: String(cascade.overwhelmedHospitalIds.length), sub:`of ${allHospitals.length}`,           color: '#ff6b2b' },
+//           ].map(s => (
+//             <div key={s.label} className="stat-box">
+//               <div className="stat-value" style={{ color: s.color }}>{s.value}</div>
+//               <div className="stat-label">{s.label}</div>
+//               {s.sub && <div className="stat-sub">{s.sub}</div>}
+//             </div>
+//           ))}
+//         </div>
+//       )}
+//
+//       {/* Tabs */}
+//       <div className="tab-bar">
+//         {(['sim','contacts','ai'] as const).map(t => (
+//           <button key={t} onClick={() => setTab(t)} className={`tab-btn ${tab===t?'tab-active':''}`}>
+//             {t==='sim'?'🗺️ Zones':t==='contacts'?'📞 Emergency':'🤖 AI Plan'}
+//           </button>
+//         ))}
+//       </div>
+//
+//       <div className="tab-content">
+//         {/* Zones tab */}
+//         {tab === 'sim' && (
+//           <div className="zones-list">
+//             <div className="toggle-row">
+//               <button onClick={onToggleRoutes} className={`toggle-btn ${showRoutes?'toggle-on':''}`}>🚑 Routes {showRoutes?'ON':'OFF'}</button>
+//               <button onClick={onToggleMarkers} className={`toggle-btn ${showMarkers?'toggle-on':''}`}>📍 Markers {showMarkers?'ON':'OFF'}</button>
+//             </div>
+//             {impacts.length === 0
+//               ? <div className="empty-state">No active simulation.<br/>Click a zone on the map.</div>
+//               : [...impacts].sort((a,b)=>b.intensity-a.intensity).map(imp => {
+//                   const zone = city.zones.find(z => z.id === imp.zoneId);
+//                   if (!zone) return null;
+//                   return (
+//                     <div key={imp.zoneId} className={`zone-card ${selectedZoneId===imp.zoneId?'zone-card-selected':''}`} onClick={() => onZoneSelect(imp.zoneId)}>
+//                       <div className="zone-card-top">
+//                         <span className="zone-name">{zone.name}</span>
+//                         <span className={`risk-badge ${RISK_BADGE[imp.riskLevel]}`}>{imp.riskLevel.toUpperCase()}</span>
+//                       </div>
+//                       <div className="int-bar-bg"><div className="int-bar-fill" style={{ width:`${imp.intensity*100}%`, background:d.color }} /></div>
+//                       <div className="zone-stats">
+//                         {imp.floodDepth       !== undefined && <span>💧 {imp.floodDepth.toFixed(1)}m</span>}
+//                         {imp.fireSpreadPct     !== undefined && <span>🔥 {(imp.fireSpreadPct*100).toFixed(0)}%</span>}
+//                         {imp.groundShakingMMI  !== undefined && <span>🏚️ MMI {imp.groundShakingMMI.toFixed(1)}</span>}
+//                         {imp.diseaseRisk       !== undefined && <span>🦠 {(imp.diseaseRisk*100).toFixed(0)}%</span>}
+//                         {imp.heatStressIndex   !== undefined && <span>🌡️ {imp.heatStressIndex.toFixed(0)}°C</span>}
+//                         {imp.roadBlockedPct > 0.2 && <span className="text-red-400">🚫 {(imp.roadBlockedPct*100).toFixed(0)}% blocked</span>}
+//                         {imp.displacedPopulation > 0 && <span>🏃 {imp.displacedPopulation.toLocaleString()}</span>}
+//                       </div>
+//                       {imp.nearestHospitalId && (
+//                         <div className="route-line">🚑 → {allHospitals.find(h=>h.id===imp.nearestHospitalId)?.name ?? 'Hospital'}</div>
+//                       )}
+//                     </div>
+//                   );
+//                 })
+//             }
+//             {cascade?.blockedRoadNames.length > 0 && (
+//               <div className="blocked-roads">
+//                 <div className="section-title">🚫 Blocked Roads</div>
+//                 {cascade.blockedRoadNames.map(r => <div key={r} className="road-item">⛔ {r}</div>)}
+//               </div>
+//             )}
+//           </div>
+//         )}
+//
+//         {/* Contacts tab */}
+//         {tab === 'contacts' && (
+//           <div className="contacts-list">
+//             <div className="contact-section">
+//               <div className="section-title">🆘 National Emergency</div>
+//               <a href={`tel:${city.emergencyContacts.nationalEmergency}`} className="national-emergency-btn">
+//                 📞 {city.emergencyContacts.nationalEmergency} — Emergency Hotline
+//               </a>
+//             </div>
+//             {([
+//               { title:'🚑 Ambulance', list: city.emergencyContacts.ambulance },
+//               { title:'🚒 Fire',      list: city.emergencyContacts.fire      },
+//               { title:'🚔 Police',    list: city.emergencyContacts.police    },
+//               { title:'🆘 Rescue & Utilities', list: [...city.emergencyContacts.rescue, ...city.emergencyContacts.utility] },
+//             ] as const).map(sec => (
+//               <div key={sec.title} className="contact-section">
+//                 <div className="section-title">{sec.title}</div>
+//                 {sec.list.map((s: typeof sec.list[number]) => (
+//                   <div key={s.id} className="contact-card">
+//                     <div className="contact-name">{s.name}</div>
+//                     {'address' in s && s.address && <div className="contact-addr">{s.address}</div>}
+//                     {'coverage' in s && s.coverage && (
+//                       <div className="contact-coverage">Covers: {s.coverage.map((id: string) => city.zones.find(z=>z.id===id)?.name??id).join(', ')}</div>
+//                     )}
+//                     <a href={`tel:${s.phone.replace(/\D/g,'')}`} className="phone-btn">📞 {s.phone}</a>
+//                   </div>
+//                 ))}
+//               </div>
+//             ))}
+//             <div className="contact-section">
+//               <div className="section-title">🏥 Hospitals</div>
+//               {allHospitals.map(h => {
+//                 const isOver = cascade?.overwhelmedHospitalIds.includes(h.id);
+//                 return (
+//                   <div key={h.id} className={`contact-card ${isOver?'contact-card-warn':''}`}>
+//                     <div className="contact-name">{h.name}{isOver?' ⚠️':''}</div>
+//                     <div className="contact-addr">Beds: {h.capacity} · Load: {((h.currentLoad??0.6)*100).toFixed(0)}%</div>
+//                     {h.specializations && <div className="contact-coverage">{h.specializations.join(' · ')}</div>}
+//                     <a href={`tel:${h.phone.replace(/\D/g,'')}`} className="phone-btn">📞 {h.phone}</a>
+//                   </div>
+//                 );
+//               })}
+//             </div>
+//           </div>
+//         )}
+//
+//         {/* AI tab */}
+//         {tab === 'ai' && (
+//           <div className="ai-tab">
+//             {!cascade && <div className="empty-state">Run a simulation first, then generate an AI response plan.</div>}
+//             {cascade && !aiPlan && <button onClick={onGenerateAI} disabled={aiLoading} className="ai-generate-btn">{aiLoading ? '⏳ Generating...' : '🤖 Generate AI Response Plan'}</button>}
+//             {aiLoading && <div className="ai-loading"><div className="ai-spinner" />Analyzing cascade data…</div>}
+//             {aiPlan && !aiLoading && (
+//               <div className="ai-plan">
+//                 <div className="ai-summary">{aiPlan.summary}</div>
+//                 {([
+//                   { key:'emergencyRouting',  label:'🚑 Emergency Routing'  },
+//                   { key:'hospitalAllocation',label:'🏥 Hospital Allocation' },
+//                   { key:'publicHealth',      label:'💊 Public Health'       },
+//                   { key:'infrastructure',    label:'🔧 Infrastructure'      },
+//                   { key:'evacuation',        label:'🏃 Evacuation'          },
+//                   { key:'contacts',          label:'📞 Emergency Contacts'  },
+//                 ] as const).map(sec => (
+//                   <div key={sec.key} className="ai-section">
+//                     <div className="ai-section-title">{sec.label}</div>
+//                     <ul className="ai-list">{aiPlan[sec.key].map((item,i)=><li key={i}>{item}</li>)}</ul>
+//                   </div>
+//                 ))}
+//                 <button onClick={onGenerateAI} className="ai-regen-btn">🔄 Regenerate</button>
+//               </div>
+//             )}
+//           </div>
+//         )}
+//       </div>
+//     </div>
+//   );
+// }
