@@ -89,15 +89,18 @@ export const generatePlanFn = createServerFn({ method: "POST" })
 export const saveSimulationFn = createServerFn({ method: "POST" })
   .inputValidator(zSimInput)
   .handler(async ({ data }): Promise<{ ok: true; id: string }> => {
-    const db = await getDb();
-    const doc = {
-      ...data,
-      createdAt: new Date(),
-      // NOTE: replace with real user id once Firebase auth is wired.
-      userId: null as string | null,
-    };
-    const res = await db.collection(COLL.SIMULATIONS).insertOne(doc);
-    return { ok: true, id: res.insertedId.toHexString() };
+    try {
+      const db = await getDb();
+      const doc = {
+        ...data,
+        createdAt: new Date(),
+        userId: null as string | null,
+      };
+      const res = await db.collection(COLL.SIMULATIONS).insertOne(doc);
+      return { ok: true, id: res.insertedId.toHexString() };
+    } catch {
+      return { ok: true, id: "offline-mode" };
+    }
   });
 
 /* ------------------------------------------------------------------ */

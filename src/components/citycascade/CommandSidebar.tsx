@@ -18,6 +18,8 @@ interface Props {
   brush: boolean;
   onBrush: (v: boolean) => void;
   zone: SelectedZone | null;
+  onUpcomingCitySelect?: (name: string) => void;
+  upcomingCityMessage?: string | null;
 }
 
 export function CommandSidebar(p: Props) {
@@ -36,7 +38,12 @@ export function CommandSidebar(p: Props) {
         </div>
       </div>
 
-      <CitySelector selected={p.city} onSelect={p.onCity} />
+      <CitySelector selected={p.city} onSelect={p.onCity} onUpcomingSelect={p.onUpcomingCitySelect} />
+      {p.upcomingCityMessage && (
+        <div className="rounded-md border border-[color:var(--neon-red)]/40 bg-background/35 p-2 text-[11px] tracking-wider text-[color:var(--neon-red)]">
+          {p.upcomingCityMessage}
+        </div>
+      )}
       <DisasterSelector selected={p.disaster} onSelect={p.onDisaster} />
       <IntensitySlider value={p.intensity} onChange={p.onIntensity} />
 

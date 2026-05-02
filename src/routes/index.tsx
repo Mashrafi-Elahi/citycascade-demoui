@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { StatusBar } from "@/components/citycascade/StatusBar";
 import { CommandSidebar } from "@/components/citycascade/CommandSidebar";
@@ -35,22 +35,49 @@ function Dashboard() {
   const [status, setStatus] = useState<Status>("idle");
   const [zone, setZone] = useState<SelectedZone | null>(null);
   const [brush, setBrush] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [upcomingCityMessage, setUpcomingCityMessage] = useState<string | null>(null);
 
   const disasterObj = DISASTERS.find((d) => d.id === disaster) ?? null;
 
+  const cascadeResult = useMemo(() => {
+    if (status !== "active" || !disasterObj) return null;
+    const base = zone?.population ?? 120000;
+    const mult = intensity / 10;
+    const diseaseHeavy = ["dengue", "water", "waste"].includes(disasterObj.id);
+    return {
+      affectedPopulation: Math.round(base * (0.9 + mult)),
+      hospitalStrain: Math.min(99, Math.round(30 + intensity * (diseaseHeavy ? 6 : 4))),
+      roadsBlocked: Math.max(1, Math.round(intensity * (["flood", "rain", "earthquake"].includes(disasterObj.id) ? 3 : 2))),
+      waterContamination: Math.min(100, Math.round(intensity * (["flood", "water", "waste"] .includes(disasterObj.id) ? 10 : 5))),
+      diseaseRisk: Math.min(100, Math.round(intensity * (diseaseHeavy ? 10 : 6))),
+    };
+  }, [status, disasterObj, zone, intensity]);
+
+
   function handleSimulate() {
-    if (!disaster) return;
+    if (!disaster) {
+      setError("Select a disaster first.");
+      return;
+    }
+    setError(null);
     setStatus("simulating");
     window.setTimeout(() => setStatus("active"), 1400);
   }
   function handleReset() {
+    setError(null);
+    setUpcomingCityMessage(null);
     setStatus("idle");
     setDisaster(null);
     setIntensity(6);
     setZone(null);
   }
   function handleGenerate() {
-    if (!disaster) return;
+    if (!disaster) {
+      setError("Select a disaster first.");
+      return;
+    }
+    setError(null);
     setStatus("simulating");
     window.setTimeout(() => setStatus("active"), 1000);
   }
@@ -65,7 +92,7 @@ function Dashboard() {
       <div className="flex flex-1 gap-3 overflow-hidden p-3">
         {/* Main column */}
         <div className="flex flex-1 flex-col gap-3 min-w-0">
-          <RiskSummary active={status === "active"} />
+          <RiskSummary active={status === "active"} data={cascadeResult} />
 
           <div className="flex flex-1 gap-3 min-h-0">
             <div className="flex-1 min-w-0">
@@ -87,6 +114,10 @@ function Dashboard() {
               <RoadBlockPanel active={status === "active"} />
             </div>
           </div>
+
+          {error && (
+            <div className="panel panel-red p-3 text-[12px] tracking-wider text-[color:var(--neon-red)]">{error}</div>
+          )}
 
           {/* Bottom AI drawer */}
           <div className="max-h-[46vh]">
@@ -116,6 +147,8 @@ function Dashboard() {
             brush={brush}
             onBrush={setBrush}
             zone={zone}
+            upcomingCityMessage={upcomingCityMessage}
+            onUpcomingCitySelect={(name) => setUpcomingCityMessage(`Coming soon: city map data not installed yet. (${name})`)}
           />
         </div>
       </div>
