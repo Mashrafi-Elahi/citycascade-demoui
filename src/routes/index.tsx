@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import { StatusBar } from "@/components/citycascade/StatusBar";
 import { CommandSidebar } from "@/components/citycascade/CommandSidebar";
-import { MapPanel } from "@/components/citycascade/MapPanel";
+import { MapPanel, type SelectedZone } from "@/components/citycascade/MapPanel";
 import { RiskSummary } from "@/components/citycascade/RiskSummary";
 import { ZoneRiskList } from "@/components/citycascade/ZoneRiskList";
 import { HospitalStatusPanel } from "@/components/citycascade/HospitalStatusPanel";
@@ -19,7 +19,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "CityCascade AI: cyberpunk emergency operations console for simulating urban disasters and generating AI-driven response plans.",
+          "CityCascade AI: emergency operations console for simulating urban disasters and generating AI-driven response plans for Dhaka.",
       },
     ],
   }),
@@ -33,23 +33,26 @@ function Dashboard() {
   const [disaster, setDisaster] = useState<DisasterId | null>(null);
   const [intensity, setIntensity] = useState(6);
   const [status, setStatus] = useState<Status>("idle");
+  const [zone, setZone] = useState<SelectedZone | null>(null);
+  const [brush, setBrush] = useState(false);
 
   const disasterObj = DISASTERS.find((d) => d.id === disaster) ?? null;
 
   function handleSimulate() {
     if (!disaster) return;
     setStatus("simulating");
-    window.setTimeout(() => setStatus("active"), 1600);
+    window.setTimeout(() => setStatus("active"), 1400);
   }
   function handleReset() {
     setStatus("idle");
     setDisaster(null);
     setIntensity(6);
+    setZone(null);
   }
   function handleGenerate() {
     if (!disaster) return;
     setStatus("simulating");
-    window.setTimeout(() => setStatus("active"), 1200);
+    window.setTimeout(() => setStatus("active"), 1000);
   }
 
   const cityLabel = city.toUpperCase();
@@ -70,12 +73,15 @@ function Dashboard() {
                 disaster={disasterObj}
                 intensity={intensity}
                 status={status}
+                selectedZoneId={zone?.id ?? null}
+                onZoneSelect={(z) => setZone(z)}
                 onSimulate={handleSimulate}
+                brush={brush}
               />
             </div>
 
             {/* Inner right info column */}
-            <div className="hidden xl:flex w-[300px] flex-col gap-3 overflow-y-auto">
+            <div className="hidden xl:flex w-[300px] flex-col gap-3 overflow-y-auto scroll-cyan">
               <ZoneRiskList active={status === "active"} />
               <HospitalStatusPanel active={status === "active"} />
               <RoadBlockPanel active={status === "active"} />
@@ -83,9 +89,12 @@ function Dashboard() {
           </div>
 
           {/* Bottom AI drawer */}
-          <div className="max-h-[42vh] overflow-y-auto">
+          <div className="max-h-[46vh]">
             <AIResponsePanel
               status={status}
+              disaster={disasterObj}
+              intensity={intensity}
+              zone={zone}
               onGenerate={handleGenerate}
               onReset={handleReset}
             />
@@ -104,6 +113,9 @@ function Dashboard() {
             onSimulate={handleSimulate}
             onReset={handleReset}
             status={status}
+            brush={brush}
+            onBrush={setBrush}
+            zone={zone}
           />
         </div>
       </div>

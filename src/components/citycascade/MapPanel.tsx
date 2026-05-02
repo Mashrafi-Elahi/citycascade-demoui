@@ -1,233 +1,389 @@
-import { useState } from "react";
-import {
-  PlusIcon, MinusIcon, LayersIcon, CrosshairIcon, PinIcon, AlertIcon,
-} from "./icons";
+import { useEffect, useRef, useState } from "react";
+import type { Feature, Polygon, MultiPolygon } from "geojson";
+
 import type { Disaster } from "./data";
 import { DisasterIconMap } from "./icons";
+import { DHAKA_CENTER, DHAKA_ZONES, DHAKA_ZOOM, type ZoneProps } from "./dhakaZones";
+import { AlertIcon, CrosshairIcon } from "./icons";
+
+export interface SelectedZone {
+  id: string;
+  name: string;
+  population: number;
+  baseRisk: number;
+  center: [number, number];
+}
 
 interface Props {
   disaster: Disaster | null;
   intensity: number;
   status: "idle" | "simulating" | "active" | "error";
+  selectedZoneId: string | null;
+  onZoneSelect: (zone: SelectedZone) => void;
   onSimulate: () => void;
+  brush?: boolean;
 }
 
-export function MapPanel({ disaster, intensity, status, onSimulate }: Props) {
-  const [pin, setPin] = useState<{ x: number; y: number } | null>(null);
+type ZoneFeature = Feature<Polygon | MultiPolygon, ZoneProps>;
 
-  function handleClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!disaster || status === "simulating") return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    setPin({
-      x: ((e.clientX - rect.left) / rect.width) * 100,
-      y: ((e.clientY - rect.top) / rect.height) * 100,
+function featureCenter(f: ZoneFeature): [number, number] {
+  // Works for Polygon and MultiPolygon by flattening all outer rings.
+  const rings =
+    f.geometry.type === "Polygon"
+      ? [f.geometry.coordinates[0]]
+      : f.geometry.coordinates.map((poly) => poly[0]);
+  const points = rings.flat();
+  const lngs = points.map((p) => p[0]);
+  const lats = points.map((p) => p[1]);
+  const lng = (Math.min(...lngs) + Math.max(...lngs)) / 2;
+  const lat = (Math.min(...lats) + Math.max(...lats)) / 2;
+  return [lat, lng];
+}
+
+function severityColor(risk: number) {
+  if (risk >= 75) return "#ff5568";
+  if (risk >= 50) return "#ffb24a";
+  return "#7cf4ff";
+}
+
+export function MapPanel({
+  disaster,
+  intensity,
+  status,
+  selectedZoneId,
+  onZoneSelect,
+  onSimulate,
+  brush = false,
+}: Props) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mapRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const geoLayerRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const markersRef = useRef<any[]>([]);
+  const pinsRef = useRef<[number, number][]>([]);
+  const [pins, setPins] = useState<[number, number][]>([]);
+  const [mapReady, setMapReady] = useState(false);
+
+  // Keep fresh copy of props for leaflet event handlers.
+  const propsRef = useRef({ disaster, intensity, status, selectedZoneId, brush, onZoneSelect, onSimulate });
+  useEffect(() => {
+    propsRef.current = { disaster, intensity, status, selectedZoneId, brush, onZoneSelect, onSimulate };
+  });
+
+  // Initialize the Leaflet map on mount (client-only).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!containerRef.current || mapRef.current) return;
+
+    let disposed = false;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async function ensureLeaflet(): Promise<any> {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const w = window as any;
+      if (w.L) return w.L;
+      await new Promise<void>((resolve, reject) => {
+        if (document.getElementById("leaflet-cdn")) {
+          const check = () => (w.L ? resolve() : setTimeout(check, 50));
+          check();
+          return;
+        }
+        const s = document.createElement("script");
+        s.id = "leaflet-cdn";
+        s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error("Failed to load Leaflet from CDN"));
+        document.head.appendChild(s);
+      });
+      return w.L;
+    }
+
+    (async () => {
+      try {
+        const L = await ensureLeaflet();
+        if (disposed || !containerRef.current || mapRef.current) return;
+
+      const map = L.map(containerRef.current, {
+        center: DHAKA_CENTER,
+        zoom: DHAKA_ZOOM,
+        zoomControl: false,
+        scrollWheelZoom: true,
+        attributionControl: false,
+      });
+      mapRef.current = map;
+
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        subdomains: ["a", "b", "c", "d"],
+        maxZoom: 19,
+      }).addTo(map);
+
+      L.control.zoom({ position: "topright" }).addTo(map);
+
+      const geo = L.geoJSON(DHAKA_ZONES, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        style: (f: any) => {
+          const feat = f as ZoneFeature;
+          const p = propsRef.current;
+          return styleFor(
+            feat.properties,
+            p.status,
+            feat.properties.id === p.selectedZoneId,
+            p.intensity,
+          );
+        },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        onEachFeature: (feature: any, layer: any) => {
+          const f = feature as ZoneFeature;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const path = layer as any;
+
+          path.on("mouseover", () => {
+            path.setStyle({ weight: 2.4, fillOpacity: 0.32 });
+          });
+          path.on("mouseout", () => {
+            const p = propsRef.current;
+            path.setStyle(
+              styleFor(f.properties, p.status, f.properties.id === p.selectedZoneId, p.intensity),
+            );
+          });
+          path.on("click", () => {
+            const p = propsRef.current;
+            const [lat, lng] = featureCenter(f);
+            p.onZoneSelect({
+              id: f.properties.id,
+              name: f.properties.name,
+              population: f.properties.population,
+              baseRisk: f.properties.baseRisk,
+              center: [lat, lng],
+            });
+            if (p.disaster && p.status !== "simulating") p.onSimulate();
+          });
+
+          path.bindTooltip(
+            `<div style="font-family:monospace;font-size:11px;letter-spacing:.1em;color:#cfeaff;">
+              <div style="color:#7cf4ff;text-transform:uppercase;letter-spacing:.2em;font-weight:700;margin-bottom:2px;">${f.properties.name}</div>
+              <div>POP ${(f.properties.population / 1000).toFixed(0)}k · RISK ${f.properties.baseRisk}</div>
+              <div style="opacity:.7;margin-top:2px;">click to target</div>
+            </div>`,
+            { direction: "top", sticky: true, opacity: 0.95 },
+          );
+        },
+      }).addTo(map);
+      geoLayerRef.current = geo;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.on("click", (e: any) => {
+        const p = propsRef.current;
+        if (!p.disaster || p.status === "simulating") return;
+        const newPin: [number, number] = [e.latlng.lat, e.latlng.lng];
+        const next = p.brush ? [...pinsRef.current, newPin] : [newPin];
+        pinsRef.current = next;
+        drawMarkers(L, map, markersRef, next, p.disaster);
+        setPins(next);
+        if (p.status !== "active") p.onSimulate();
+      });
+
+      setTimeout(() => map.invalidateSize(), 50);
+      setMapReady(true);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[CityCascade] map init failed", err);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        geoLayerRef.current = null;
+      }
+    };
+  }, []);
+
+  // Restyle polygons whenever status/selected zone/intensity changes.
+  useEffect(() => {
+    const layer = geoLayerRef.current;
+    if (!layer) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    layer.eachLayer((l: any) => {
+      const feat = l.feature as ZoneFeature | undefined;
+      if (!feat) return;
+      const isSel = feat.properties.id === selectedZoneId;
+      l.setStyle(styleFor(feat.properties, status, isSel, intensity));
     });
-    onSimulate();
-  }
+  }, [selectedZoneId, status, intensity]);
+
+  // Reset pins when status goes back to idle.
+  useEffect(() => {
+    if (status === "idle" && pinsRef.current.length > 0) {
+      pinsRef.current = [];
+      setPins([]);
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
+    }
+  }, [status]);
 
   const showEmpty = !disaster && status === "idle";
   const showLoading = status === "simulating";
   const showError = status === "error";
 
   return (
-    <div className="panel panel-cyan relative h-full overflow-hidden">
+    <div className="panel panel-cyan relative h-full overflow-hidden" data-testid="map-panel">
       {/* Title strip */}
-      <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-4 py-2.5 bg-gradient-to-b from-background/90 to-transparent">
+      <div className="absolute inset-x-0 top-0 z-[500] flex items-center justify-between px-4 py-2.5 bg-gradient-to-b from-background/95 to-transparent pointer-events-none">
         <div className="flex items-center gap-3">
           <span className="font-display text-[11px] tracking-[0.3em] neon-text-cyan">Tactical Map</span>
           <span className="text-[10px] text-muted-foreground tracking-widest font-mono">
-            DHAKA · 23.8103°N 90.4125°E
+            DHAKA · 23.8103°N 90.4125°E · LEAFLET · {DHAKA_ZONES.features.length} ZONES
           </span>
         </div>
         <div className="flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
-          <Legend dot="var(--neon-green)" label="STABLE" />
-          <Legend dot="var(--neon-amber)" label="WARN" />
-          <Legend dot="var(--neon-red)" label="CRITICAL" />
+          <Legend dot="#7cf4ff" label="STABLE" />
+          <Legend dot="#ffb24a" label="ELEVATED" />
+          <Legend dot="#ff5568" label="CRITICAL" />
         </div>
       </div>
 
-      {/* Map canvas */}
+      {/* Map container */}
       <div
-        onClick={handleClick}
-        className={`relative h-full w-full grid-bg scanline cursor-${disaster ? "crosshair" : "default"}`}
-        style={{
-          background:
-            "radial-gradient(ellipse at 30% 40%, oklch(0.22 0.05 220 / 0.6), oklch(0.13 0.04 250) 70%)",
-        }}
-      >
-        {/* Decorative river / city silhouette */}
-        <svg className="absolute inset-0 h-full w-full opacity-50" viewBox="0 0 800 500" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="river" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="oklch(0.6 0.15 220)" stopOpacity="0.5" />
-              <stop offset="100%" stopColor="oklch(0.4 0.1 220)" stopOpacity="0.2" />
-            </linearGradient>
-          </defs>
-          <path
-            d="M-20 380 C 120 320, 260 420, 400 360 S 700 300, 820 360 L 820 520 L -20 520 Z"
-            fill="url(#river)"
-          />
-          <g stroke="oklch(0.78 0.18 200 / 0.35)" strokeWidth="0.7" fill="none">
-            <path d="M50 100 L 760 110" />
-            <path d="M120 60 L 130 460" />
-            <path d="M380 40 L 390 440" />
-            <path d="M620 50 L 600 470" />
-            <path d="M30 250 L 770 270" />
-            <path d="M40 350 L 780 360" />
-          </g>
-          {/* District blobs */}
-          <g fill="oklch(0.78 0.18 200 / 0.06)" stroke="oklch(0.78 0.18 200 / 0.35)" strokeDasharray="3 3">
-            <path d="M180 100 L 320 110 L 340 200 L 220 230 Z" />
-            <path d="M380 150 L 520 140 L 540 250 L 400 260 Z" />
-            <path d="M560 180 L 700 200 L 690 320 L 540 310 Z" />
-            <path d="M180 260 L 340 270 L 360 380 L 200 390 Z" />
-            <path d="M380 290 L 520 290 L 540 400 L 380 410 Z" />
-          </g>
-          <g fill="oklch(0.78 0.18 200 / 0.7)" fontSize="9" fontFamily="monospace" letterSpacing="2">
-            <text x="220" y="170">UTTARA</text>
-            <text x="430" y="200">GULSHAN</text>
-            <text x="600" y="250">BADDA</text>
-            <text x="220" y="330">MIRPUR</text>
-            <text x="420" y="350">DHANMONDI</text>
-            <text x="120" y="420">OLD DHAKA</text>
-          </g>
-        </svg>
+        ref={containerRef}
+        className="citycascade-map absolute inset-0"
+        style={{ background: "#0e1524" }}
+      />
 
-        {/* Risk hotspots */}
-        {status === "active" && (
-          <>
-            <Hotspot x={28} y={62} color="var(--neon-red)" size={140} />
-            <Hotspot x={52} y={48} color="var(--neon-amber)" size={110} />
-            <Hotspot x={72} y={56} color="var(--neon-red)" size={90} />
-            <Hotspot x={42} y={70} color="var(--neon-amber)" size={120} />
-          </>
-        )}
+      {!mapReady && (
+        <div className="pointer-events-none absolute inset-0 z-[440] grid place-items-center">
+          <span className="font-display text-[11px] tracking-[0.3em] text-muted-foreground">
+            INITIALISING TACTICAL MAP...
+          </span>
+        </div>
+      )}
 
-        {/* Sweep line */}
-        {showLoading && (
-          <div className="pointer-events-none absolute inset-0 overflow-hidden">
-            <div
-              className="scan-line absolute inset-x-0 h-24"
-              style={{
-                background:
-                  "linear-gradient(180deg, transparent, oklch(0.85 0.18 200 / 0.25), transparent)",
-              }}
-            />
-          </div>
-        )}
-
-        {/* Pin */}
-        {pin && (
+      {/* Sweep line overlay while simulating */}
+      {showLoading && (
+        <div className="pointer-events-none absolute inset-0 z-[450] overflow-hidden">
           <div
-            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2"
-            style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
-          >
-            <div
-              className="relative grid h-9 w-9 place-items-center rounded-full"
-              style={{
-                color: "var(--neon-red)",
-                boxShadow: "0 0 0 1px var(--neon-red), 0 0 24px var(--neon-red)",
-                background: "oklch(0.18 0.04 250 / 0.7)",
-              }}
-            >
-              {disaster && (() => {
-                const Icon = DisasterIconMap[disaster.id];
-                return <Icon className="h-4 w-4 neon-text-red" />;
-              })()}
-              <span
-                className="pulse-dot absolute inset-0 rounded-full"
-                style={{ color: "var(--neon-red)" }}
-              />
+            className="scan-line absolute inset-x-0 h-24"
+            style={{
+              background: "linear-gradient(180deg, transparent, oklch(0.85 0.18 200 / 0.22), transparent)",
+            }}
+          />
+        </div>
+      )}
+
+      {/* Empty state */}
+      {showEmpty && mapReady && (
+        <div className="pointer-events-none absolute inset-0 z-[450] grid place-items-center">
+          <div className="panel panel-cyan text-center max-w-sm px-6 py-5 pointer-events-auto">
+            <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full border border-[color:var(--neon-cyan)]/60">
+              <CrosshairIcon className="h-5 w-5 neon-text-cyan" />
             </div>
+            <div className="font-display text-sm tracking-[0.25em] neon-text-cyan">AWAITING INPUT</div>
+            <p className="mt-2 text-xs text-muted-foreground tracking-widest">
+              Select a disaster, then click a Dhaka zone or anywhere on the map.
+            </p>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Empty state */}
-        {showEmpty && (
-          <div className="absolute inset-0 grid place-items-center">
-            <div className="text-center max-w-sm px-6">
-              <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full panel panel-cyan">
-                <CrosshairIcon className="h-5 w-5 neon-text-cyan" />
-              </div>
-              <div className="font-display text-sm tracking-[0.25em] neon-text-cyan">AWAITING INPUT</div>
-              <p className="mt-2 text-xs text-muted-foreground tracking-widest">
-                Select a disaster and click or draw on the map.
-              </p>
+      {/* Loading overlay */}
+      {showLoading && (
+        <div className="pointer-events-none absolute inset-0 z-[460] grid place-items-center bg-background/35 backdrop-blur-[2px]">
+          <div className="text-center">
+            <div className="mx-auto mb-3 h-10 w-10 rounded-full border-2 border-[color:var(--neon-cyan)] border-t-transparent animate-spin" />
+            <div className="font-display text-sm tracking-[0.3em] neon-text-cyan">SIMULATING CASCADE...</div>
+            <p className="mt-1 text-[10px] text-muted-foreground tracking-widest">
+              MODELING ZONE PROPAGATION · INTENSITY {intensity}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Error overlay */}
+      {showError && (
+        <div className="absolute inset-0 z-[470] grid place-items-center bg-background/50 backdrop-blur-sm">
+          <div className="panel panel-red max-w-sm p-5 text-center">
+            <AlertIcon className="mx-auto h-8 w-8 neon-text-red" />
+            <div className="mt-2 font-display text-sm tracking-[0.25em] neon-text-red">
+              MAP / TELEMETRY FAULT
             </div>
+            <p className="mt-2 text-[11px] text-muted-foreground tracking-widest">
+              Tile stream lost. Reset the field or retry the cascade.
+            </p>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Loading state */}
-        {showLoading && (
-          <div className="absolute inset-0 grid place-items-center bg-background/30 backdrop-blur-sm">
-            <div className="text-center">
-              <div className="mx-auto mb-3 h-10 w-10 rounded-full border-2 border-[color:var(--neon-cyan)] border-t-transparent animate-spin" />
-              <div className="font-display text-sm tracking-[0.3em] neon-text-cyan">SIMULATING CASCADE...</div>
-              <p className="mt-1 text-[10px] text-muted-foreground tracking-widest">
-                MODELING ZONE PROPAGATION · INTENSITY {intensity}
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Error state */}
-        {showError && (
-          <div className="absolute inset-0 grid place-items-center bg-background/40 backdrop-blur-sm">
-            <div className="panel panel-red max-w-sm p-5 text-center">
-              <AlertIcon className="mx-auto h-8 w-8 neon-text-red" />
-              <div className="mt-2 font-display text-sm tracking-[0.25em] neon-text-red">
-                SIMULATION FAULT
-              </div>
-              <p className="mt-2 text-[11px] text-muted-foreground tracking-widest">
-                Telemetry stream lost. Retry the cascade or reset the field.
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Floating controls */}
-      <div className="absolute right-3 top-14 z-20 flex flex-col gap-1.5">
-        <MapBtn><PlusIcon className="h-4 w-4" /></MapBtn>
-        <MapBtn><MinusIcon className="h-4 w-4" /></MapBtn>
-        <MapBtn><LayersIcon className="h-4 w-4" /></MapBtn>
-        <MapBtn><CrosshairIcon className="h-4 w-4" /></MapBtn>
-        <MapBtn><PinIcon className="h-4 w-4" /></MapBtn>
-      </div>
-
-      {/* Coords readout */}
-      <div className="absolute bottom-3 left-3 z-20 panel px-2.5 py-1.5 font-mono text-[10px] text-muted-foreground tracking-widest">
-        {pin
-          ? `EPICENTER · X${pin.x.toFixed(1)} / Y${pin.y.toFixed(1)}`
-          : "EPICENTER · NULL"}
+      {/* Disaster + epicenter chip */}
+      <div className="absolute bottom-3 left-3 z-[500] panel px-2.5 py-1.5 font-mono text-[10px] text-muted-foreground tracking-widest flex items-center gap-2">
+        {disaster && (() => {
+          const Icon = DisasterIconMap[disaster.id];
+          return <Icon className="h-3.5 w-3.5 neon-text-red" />;
+        })()}
+        <span>
+          {pins.length > 0
+            ? `EPICENTER · ${pins[pins.length - 1][0].toFixed(4)}, ${pins[pins.length - 1][1].toFixed(4)}`
+            : "EPICENTER · NULL"}
+        </span>
+        {brush && <span className="ml-2 neon-text-cyan">BRUSH</span>}
       </div>
     </div>
   );
 }
 
-function MapBtn({ children }: { children: React.ReactNode }) {
-  return (
-    <button
-      className="grid h-9 w-9 place-items-center rounded-md border border-border/60 bg-background/70 backdrop-blur transition hover:border-[color:var(--neon-cyan)]/70 hover:text-[color:var(--neon-cyan)]"
-      type="button"
-    >
-      {children}
-    </button>
-  );
+function styleFor(
+  props: ZoneProps,
+  st: Props["status"],
+  selected: boolean,
+  intensity: number,
+) {
+  const risk = props.baseRisk;
+  const bump = st === "active" ? Math.min(30, intensity * 2) : 0;
+  const colour = severityColor(risk + bump);
+  return {
+    color: colour,
+    weight: selected ? 2.5 : 1.1,
+    opacity: selected ? 1 : 0.75,
+    fillColor: colour,
+    fillOpacity: st === "active" ? (selected ? 0.38 : 0.22) : selected ? 0.25 : 0.08,
+    dashArray: selected ? undefined : "4 3",
+  };
 }
 
-function Hotspot({ x, y, color, size }: { x: number; y: number; color: string; size: number }) {
-  return (
-    <div
-      className="pointer-events-none absolute rounded-full"
-      style={{
-        left: `${x}%`, top: `${y}%`,
-        width: size, height: size,
-        transform: "translate(-50%, -50%)",
-        background: `radial-gradient(circle, ${color}55 0%, transparent 70%)`,
-      }}
-    />
-  );
+function drawMarkers(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  L: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  map: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  markersRef: React.MutableRefObject<any[]>,
+  pins: [number, number][],
+  disaster: Disaster | null,
+) {
+  markersRef.current.forEach((m) => m.remove());
+  markersRef.current = [];
+  const c = disaster ? "#ff4b5c" : "#7cf4ff";
+  pins.forEach((p) => {
+    const icon = L.divIcon({
+      className: "citycascade-pin",
+      html: `<div style="width:18px;height:18px;border-radius:999px;background:${c};box-shadow:0 0 0 3px rgba(0,0,0,.6),0 0 18px ${c};border:2px solid #0b0f1d;"></div>`,
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+    });
+    const mk = L.marker(p, { icon }).addTo(map);
+    mk.bindPopup(
+      `<div style="font-family:monospace;font-size:11px;">
+        <div style="color:#7cf4ff;letter-spacing:0.2em;">EPICENTER</div>
+        <div>LAT ${p[0].toFixed(4)} · LNG ${p[1].toFixed(4)}</div>
+        ${disaster ? `<div style="margin-top:4px;color:#ff6b7a;">${disaster.name.toUpperCase()}</div>` : ""}
+      </div>`,
+    );
+    markersRef.current.push(mk);
+  });
 }
 
 function Legend({ dot, label }: { dot: string; label: string }) {
