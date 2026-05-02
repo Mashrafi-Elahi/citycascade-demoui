@@ -3,7 +3,7 @@ import {
   RouteIcon, HospitalIcon, HeartPulseIcon, InfraIcon, EvacIcon, MegaphoneIcon,
   ChevronDownIcon, SparkIcon, AlertIcon,
 } from "./icons";
-import type { JSX } from "react";
+import type * as React from "react";
 
 interface Section {
   id: string;

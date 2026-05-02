@@ -1,5 +1,5 @@
 import { PeopleIcon, HospitalIcon, RoadIcon, DropContamIcon, VirusIcon } from "./icons";
-import type { JSX } from "react";
+import type * as React from "react";
 
 interface Metric {
   label: string;
