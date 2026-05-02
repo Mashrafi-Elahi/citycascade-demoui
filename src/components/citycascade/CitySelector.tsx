@@ -5,9 +5,10 @@ import { CityIcon, PinIcon, SearchIcon } from "./icons";
 interface Props {
   selected: string;
   onSelect: (id: string) => void;
+  onUpcomingSelect?: (name: string) => void;
 }
 
-export function CitySelector({ selected, onSelect }: Props) {
+export function CitySelector({ selected, onSelect, onUpcomingSelect }: Props) {
   const [q, setQ] = useState("");
 
   const filtered = useMemo(() => {
@@ -49,8 +50,11 @@ export function CitySelector({ selected, onSelect }: Props) {
             <button
               data-testid={`city-item-${c.id}`}
               key={c.id}
-              disabled={!active}
-              onClick={() => active && onSelect(c.id)}
+              
+              onClick={() => {
+                if (active) onSelect(c.id);
+                else onUpcomingSelect?.(c.name);
+              }}
               className={[
                 "group relative overflow-hidden rounded-md border px-2.5 py-2 text-left transition",
                 "disabled:cursor-not-allowed",
@@ -97,7 +101,7 @@ export function CitySelector({ selected, onSelect }: Props) {
                       boxShadow: "0 0 8px -2px oklch(0.68 0.27 22 / 0.7)",
                     }}
                   >
-                    SOON
+                    UPCOMING
                   </span>
                 )}
                 {isSel && (

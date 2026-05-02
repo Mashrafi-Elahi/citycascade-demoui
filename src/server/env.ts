@@ -1,7 +1,7 @@
 // Vite/TanStack Start exposes env via import.meta.env at build time.
 // Backend server routes can also read process.env when running under Node.
 export const env = {
-  MONGO_URL: process.env.MONGO_URL || "mongodb://localhost:27017",
+  MONGO_URL: process.env.MONGODB_URI || process.env.MONGO_URL || "mongodb://127.0.0.1:27017/citycascade",
   DB_NAME: process.env.DB_NAME || "citycascade",
   // AI configuration — can be set per-request from the UI, or pre-filled via env.
   AI_PROVIDER: process.env.AI_PROVIDER || "template", // gemini | openai-compat | template
