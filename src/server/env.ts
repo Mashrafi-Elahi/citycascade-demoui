@@ -8,4 +8,5 @@ export const env = {
   AI_API_KEY: process.env.AI_API_KEY || "",
   AI_BASE_URL: process.env.AI_BASE_URL || "",
   AI_MODEL: process.env.AI_MODEL || "",
+  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || "admin123",
 };
